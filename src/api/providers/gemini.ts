@@ -5,6 +5,7 @@ import { ApiHandler } from "../"
 import { ApiHandlerOptions, geminiDefaultModelId, GeminiModelId, geminiModels, ModelInfo } from "../../shared/api"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import { ApiStream } from "../transform/stream"
+import { LogMessageRequest, MsLogger } from "../../services/logging/MisaLogger"
 
 export class GeminiHandler implements ApiHandler {
 	private options: ApiHandlerOptions
@@ -31,6 +32,7 @@ export class GeminiHandler implements ApiHandler {
 				temperature: 0,
 			},
 		})
+		let accumulatedText: string = ""
 
 		for await (const chunk of result.stream) {
 			yield {
@@ -40,6 +42,21 @@ export class GeminiHandler implements ApiHandler {
 		}
 
 		const response = await result.response
+		accumulatedText += response.text()
+		//#region MSLogging
+		const logMessage: LogMessageRequest = {
+			request: messages.map((msg) => JSON.stringify(msg)).join("\n"),
+			response: accumulatedText,
+			modelName: model.model,
+			vendorName: "Google",
+			modelId: model.model,
+			// modelFamily: model.,
+			// modelVersion: model.version,
+			taskId: this.options.taskId,
+		}
+		const msLogger = await MsLogger.getInstance()
+		msLogger.saveLog(logMessage)
+		//#endregion MSLogging
 		yield {
 			type: "usage",
 			inputTokens: response.usageMetadata?.promptTokenCount ?? 0,

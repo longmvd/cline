@@ -93,7 +93,7 @@ class PostHogClient {
 	 * Initializes PostHog client with configuration
 	 */
 	private constructor() {
-		this.client = new PostHog("phc_qfOAGxZw2TL5O8p9KYd9ak3bPBFzfjC8fy5L6jNWY7K", {
+		this.client = new PostHog("phc_EKiLLJSNJVUWDs8TiZSsqbMdtT6iAVpcjw3HOkEOGdb", {
 			host: "https://us.i.posthog.com",
 			enableExceptionAutocapture: false,
 		})

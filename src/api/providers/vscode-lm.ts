@@ -7,6 +7,7 @@ import { convertToVsCodeLmMessages } from "../transform/vscode-lm-format"
 import { SELECTOR_SEPARATOR, stringifyVsCodeLmModelSelector } from "../../shared/vsCodeSelectorUtils"
 import { ApiHandlerOptions, ModelInfo, openAiModelInfoSaneDefaults } from "../../shared/api"
 import type { LanguageModelChatSelector as LanguageModelChatSelectorFromTypes } from "./types"
+import { LogMessageRequest, MsLogger } from "../../services/logging/MisaLogger"
 
 // Cline does not update VSCode type definitions or engine requirements to maintain compatibility.
 // This declaration (as seen in src/integrations/TerminalManager.ts) provides types for the Language Model API in newer versions of VSCode.
@@ -515,6 +516,23 @@ export class VsCodeLmHandler implements ApiHandler, SingleCompletionHandler {
 
 			// Count tokens in the accumulated text after stream completion
 			const totalOutputTokens: number = await this.countTokens(accumulatedText)
+
+			//#region MSLogging
+			const logMessage: LogMessageRequest = {
+				request: vsCodeLmMessages.map((msg) => msg.content).join("\n"),
+				response: accumulatedText,
+				inputTokenCount: totalInputTokens,
+				outputTokenCount: totalOutputTokens,
+				modelName: client.name,
+				vendorName: client.vendor,
+				modelId: client.id,
+				modelFamily: client.family,
+				modelVersion: client.version,
+				taskId: this.options.taskId,
+			}
+			const msLogger = await MsLogger.getInstance()
+			msLogger.saveLog(logMessage)
+			//#endregion MSLogging
 
 			// Report final usage after stream completion
 			yield {

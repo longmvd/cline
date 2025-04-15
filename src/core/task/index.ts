@@ -84,6 +84,7 @@ import {
 } from "../storage/disk"
 import { getGlobalClineRules, getLocalClineRules } from "../context/instructions/user-instructions/cline-rules"
 import { getGlobalState } from "../storage/state"
+import { MsLogger } from "../../services/logging/MisaLogger"
 
 const cwd = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0) ?? path.join(os.homedir(), "Desktop") // may or may not exist but fs checking existence would immediately ask for permission which would be bad UX, need to come up with a better solution
 
@@ -227,6 +228,9 @@ export class Task {
 			// New task started
 			telemetryService.captureTaskCreated(this.taskId, apiConfiguration.apiProvider)
 		}
+		MsLogger.getInstance().then((logger) => {
+			logger.setTaskId(this.taskId)
+		})
 	}
 
 	// While a task is ref'd by a controller, it will always have access to the extension context

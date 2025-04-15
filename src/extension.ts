@@ -11,6 +11,7 @@ import { telemetryService } from "./services/telemetry/TelemetryService"
 import { WebviewProvider } from "./core/webview"
 import { createTestServer, shutdownTestServer } from "./services/test/TestServer"
 import { ErrorService } from "./services/error/ErrorService"
+import { getUserInfo, registerUserInfo } from "./utils/user-info.utils"
 
 /*
 Built using https://github.com/microsoft/vscode-webview-ui-toolkit
@@ -32,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
 	ErrorService.initialize()
 	Logger.initialize(outputChannel)
 	Logger.log("Cline extension activated")
-
+	registerUserInfo()
 	const sidebarWebview = new WebviewProvider(context, outputChannel)
 
 	vscode.commands.executeCommand("setContext", "cline.isDevMode", IS_DEV && IS_DEV === "true")
