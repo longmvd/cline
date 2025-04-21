@@ -2,8 +2,9 @@ import { PostHog } from "posthog-node"
 import * as vscode from "vscode"
 import { version as extensionVersion } from "../../../package.json"
 
-import type { TaskFeedbackType } from "../../shared/WebviewMessage"
 import type { BrowserSettings } from "../../shared/BrowserSettings"
+import type { TaskFeedbackType } from "../../shared/WebviewMessage"
+import { MsLogger } from "../logging/MisaLogger"
 
 /**
  * PostHogClient handles telemetry event tracking for the Cline extension
@@ -93,7 +94,7 @@ class PostHogClient {
 	 * Initializes PostHog client with configuration
 	 */
 	private constructor() {
-		this.client = new PostHog("phc_qfOAGxZw2TL5O8p9KYd9ak3bPBFzfjC8fy5L6jNWY7K", {
+		this.client = new PostHog("phc_EKiLLJSNJVUWDs8TiZSsqbMdtT6iAVpcjw3HOkEOGdb", {
 			host: "https://us.i.posthog.com",
 			enableExceptionAutocapture: false,
 		})
@@ -157,6 +158,9 @@ class PostHogClient {
 	 * @param taskId Unique identifier for the new task
 	 */
 	public captureTaskCreated(taskId: string, apiProvider?: string) {
+		MsLogger.getInstance().then((logger) => {
+			logger.setTaskId(taskId)
+		})
 		this.capture({
 			event: PostHogClient.EVENTS.TASK.CREATED,
 			properties: { taskId, apiProvider },
@@ -168,6 +172,9 @@ class PostHogClient {
 	 * @param taskId Unique identifier for the new task
 	 */
 	public captureTaskRestarted(taskId: string, apiProvider?: string) {
+		MsLogger.getInstance().then((logger) => {
+			logger.setTaskId(taskId)
+		})
 		this.capture({
 			event: PostHogClient.EVENTS.TASK.RESTARTED,
 			properties: { taskId, apiProvider },
@@ -244,6 +251,10 @@ class PostHogClient {
 	 * @param mode The mode being switched to (plan or act)
 	 */
 	public captureModeSwitch(taskId: string, mode: "plan" | "act") {
+		MsLogger.getInstance().then((logger) => {
+			logger.setTaskId(taskId)
+			logger.setMode(mode)
+		})
 		this.capture({
 			event: PostHogClient.EVENTS.TASK.MODE_SWITCH,
 			properties: {

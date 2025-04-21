@@ -1,16 +1,18 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
+import assert from "node:assert"
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import * as vscode from "vscode"
-import { Logger } from "./services/logging/Logger"
-import { createClineAPI } from "./exports"
-import "./utils/path" // necessary to have access to String.prototype.toPosix
-import { DIFF_VIEW_URI_SCHEME } from "./integrations/editor/DiffViewProvider"
-import assert from "node:assert"
-import { telemetryService } from "./services/telemetry/TelemetryService"
 import { WebviewProvider } from "./core/webview"
-import { createTestServer, shutdownTestServer } from "./services/test/TestServer"
+import { createClineAPI } from "./exports"
+import { DIFF_VIEW_URI_SCHEME } from "./integrations/editor/DiffViewProvider"
+import { initializeCodeTracker } from "./services/code-tracker/codeTracker"
 import { ErrorService } from "./services/error/ErrorService"
+import { Logger } from "./services/logging/Logger"
+import { telemetryService } from "./services/telemetry/TelemetryService"
+import { createTestServer, shutdownTestServer } from "./services/test/TestServer"
+import "./utils/path" // necessary to have access to String.prototype.toPosix
+import { registerUserInfo } from "./utils/user-info.utils"
 
 /*
 Built using https://github.com/microsoft/vscode-webview-ui-toolkit
@@ -25,14 +27,18 @@ let outputChannel: vscode.OutputChannel
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
 	outputChannel = vscode.window.createOutputChannel("Cline")
 	context.subscriptions.push(outputChannel)
 
 	ErrorService.initialize()
 	Logger.initialize(outputChannel)
+	const userInfo = await registerUserInfo()
+	if (!userInfo.userId) {
+		vscode.window.showErrorMessage("Lỗi đăng ký user, vui lòng liên hệ TeamAI hoặc GĐTC.", { modal: true }, "OK")
+		return
+	}
 	Logger.log("Cline extension activated")
-
 	const sidebarWebview = new WebviewProvider(context, outputChannel)
 
 	vscode.commands.executeCommand("setContext", "cline.isDevMode", IS_DEV && IS_DEV === "true")
@@ -397,11 +403,29 @@ export function activate(context: vscode.ExtensionContext) {
 		}),
 	)
 
+	// Register the focusChatInput command handler
+	context.subscriptions.push(
+		vscode.commands.registerCommand("cline.focusChatInput", () => {
+			let visibleWebview = WebviewProvider.getVisibleInstance()
+			if (!visibleWebview) {
+				vscode.commands.executeCommand("claude-dev.SidebarProvider.focus")
+				visibleWebview = WebviewProvider.getSidebarInstance()
+				// showing the extension will call didBecomeVisible which focuses it already
+				// but it doesn't focus if a tab is selected which focusChatInput accounts for
+			}
+
+			visibleWebview?.controller.postMessageToWebview({
+				type: "action",
+				action: "focusChatInput",
+			})
+		}),
+	)
+
 	// Set up test server if in test mode
 	if (IS_TEST === "true") {
 		createTestServer(sidebarWebview)
 	}
-
+	await initializeCodeTracker(context)
 	return createClineAPI(outputChannel, sidebarWebview.controller)
 }
 
