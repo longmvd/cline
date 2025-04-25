@@ -8,32 +8,32 @@ import pWaitFor from "p-wait-for"
 import * as path from "path"
 import * as vscode from "vscode"
 import { handleGrpcRequest } from "./grpc-handler"
-import { buildApiHandler } from "../../api"
-import { cleanupLegacyCheckpoints } from "../../integrations/checkpoints/CheckpointMigration"
-import { downloadTask } from "../../integrations/misc/export-markdown"
-import { fetchOpenGraphData, isImageUrl } from "../../integrations/misc/link-preview"
-import { openFile, openImage } from "../../integrations/misc/open-file"
-import { selectImages } from "../../integrations/misc/process-images"
-import { getTheme } from "../../integrations/theme/getTheme"
-import WorkspaceTracker from "../../integrations/workspace/WorkspaceTracker"
-import { ClineAccountService } from "../../services/account/ClineAccountService"
-import { discoverChromeInstances } from "../../services/browser/BrowserDiscovery"
-import { BrowserSession } from "../../services/browser/BrowserSession"
-import { McpHub } from "../../services/mcp/McpHub"
-import { searchWorkspaceFiles } from "../../services/search/file-search"
-import { telemetryService } from "../../services/telemetry/TelemetryService"
-import { ApiProvider, ModelInfo } from "../../shared/api"
-import { ChatContent } from "../../shared/ChatContent"
-import { ChatSettings } from "../../shared/ChatSettings"
-import { ExtensionMessage, ExtensionState, Invoke, Platform } from "../../shared/ExtensionMessage"
-import { HistoryItem } from "../../shared/HistoryItem"
-import { McpDownloadResponse, McpMarketplaceCatalog, McpServer } from "../../shared/mcp"
-import { TelemetrySetting } from "../../shared/TelemetrySetting"
-import { ClineCheckpointRestore, WebviewMessage } from "../../shared/WebviewMessage"
-import { fileExistsAtPath } from "../../utils/fs"
-import { searchCommits } from "../../utils/git"
-import { getWorkspacePath } from "../../utils/path"
-import { getTotalTasksSize } from "../../utils/storage"
+import { buildApiHandler } from "@api/index"
+import { cleanupLegacyCheckpoints } from "@integrations/checkpoints/CheckpointMigration"
+import { downloadTask } from "@integrations/misc/export-markdown"
+import { fetchOpenGraphData, isImageUrl } from "@integrations/misc/link-preview"
+import { openImage } from "@integrations/misc/open-file"
+import { handleFileServiceRequest } from "./file"
+import { selectImages } from "@integrations/misc/process-images"
+import { getTheme } from "@integrations/theme/getTheme"
+import WorkspaceTracker from "@integrations/workspace/WorkspaceTracker"
+import { ClineAccountService } from "@services/account/ClineAccountService"
+import { BrowserSession } from "@services/browser/BrowserSession"
+import { McpHub } from "@services/mcp/McpHub"
+import { searchWorkspaceFiles } from "@services/search/file-search"
+import { telemetryService } from "@services/telemetry/TelemetryService"
+import { ApiProvider, ModelInfo } from "@shared/api"
+import { ChatContent } from "@shared/ChatContent"
+import { ChatSettings } from "@shared/ChatSettings"
+import { ExtensionMessage, ExtensionState, Invoke, Platform } from "@shared/ExtensionMessage"
+import { HistoryItem } from "@shared/HistoryItem"
+import { McpDownloadResponse, McpMarketplaceCatalog, McpServer } from "@shared/mcp"
+import { TelemetrySetting } from "@shared/TelemetrySetting"
+import { ClineCheckpointRestore, WebviewMessage } from "@shared/WebviewMessage"
+import { fileExistsAtPath } from "@utils/fs"
+import { searchCommits } from "@utils/git"
+import { getWorkspacePath } from "@utils/path"
+import { getTotalTasksSize } from "@utils/storage"
 import { openMention } from "../mentions"
 import { ensureMcpServersDirectoryExists, ensureSettingsDirectoryExists, GlobalFileNames } from "../storage/disk"
 import {
@@ -48,7 +48,7 @@ import {
 	updateWorkspaceState,
 } from "../storage/state"
 import { Task, cwd } from "../task"
-import { ClineRulesToggles } from "../../shared/cline-rules"
+import { ClineRulesToggles } from "@shared/cline-rules"
 import { createRuleFile, deleteRuleFile, refreshClineRulesToggles } from "../context/instructions/user-instructions/cline-rules"
 
 /*
@@ -139,6 +139,14 @@ export class Controller {
 		await this.clearTask() // ensures that an existing task doesn't exist before starting a new one, although this shouldn't be possible since user must clear task before starting a new one
 		const { apiConfiguration, customInstructions, autoApprovalSettings, browserSettings, chatSettings } =
 			await getAllExtensionState(this.context)
+
+		if (autoApprovalSettings) {
+			const updatedAutoApprovalSettings = {
+				...autoApprovalSettings,
+				version: (autoApprovalSettings.version ?? 1) + 1,
+			}
+			await updateGlobalState(this.context, "autoApprovalSettings", updatedAutoApprovalSettings)
+		}
 		this.task = new Task(
 			this.context,
 			this.mcpHub,
@@ -277,6 +285,9 @@ export class Controller {
 				// initializing new instance of Cline will make sure that any agentically running promises in old instance don't affect our new task. this essentially creates a fresh slate for the new task
 				await this.initTask(message.text, message.images)
 				break
+			case "condense":
+				this.task?.handleWebviewAskResponse("yesButtonClicked")
+				break
 			case "apiConfiguration":
 				if (message.apiConfiguration) {
 					await updateApiConfiguration(this.context, message.apiConfiguration)
@@ -288,11 +299,16 @@ export class Controller {
 				break
 			case "autoApprovalSettings":
 				if (message.autoApprovalSettings) {
-					await updateGlobalState(this.context, "autoApprovalSettings", message.autoApprovalSettings)
-					if (this.task) {
-						this.task.autoApprovalSettings = message.autoApprovalSettings
+					const currentSettings = (await getAllExtensionState(this.context)).autoApprovalSettings
+					const incomingVersion = message.autoApprovalSettings.version ?? 1
+					const currentVersion = currentSettings?.version ?? 1
+					if (incomingVersion > currentVersion) {
+						await updateGlobalState(this.context, "autoApprovalSettings", message.autoApprovalSettings)
+						if (this.task) {
+							this.task.autoApprovalSettings = message.autoApprovalSettings
+						}
+						await this.postStateToWebview()
 					}
-					await this.postStateToWebview()
 				}
 				break
 			case "browserSettings":
@@ -330,11 +346,6 @@ export class Controller {
 				break
 			case "askResponse":
 				this.task?.handleWebviewAskResponse(message.askResponse!, message.text, message.images)
-				break
-			case "clearTask":
-				// newTask will start a new task with a given task text, while clear task resets the current session and allows for a new task to be started
-				await this.clearTask()
-				await this.postStateToWebview()
 				break
 			case "didShowAnnouncement":
 				await updateGlobalState(this.context, "lastShownAnnouncementId", this.latestAnnouncementId)
@@ -412,9 +423,6 @@ export class Controller {
 			case "checkIsImageUrl":
 				this.checkIsImageUrl(message.text!)
 				break
-			case "openFile":
-				openFile(message.text!)
-				break
 			case "createRuleFile":
 				if (typeof message.isGlobal !== "boolean" || typeof message.filename !== "string" || !message.filename) {
 					console.error("createRuleFile: Missing or invalid parameters", {
@@ -428,13 +436,13 @@ export class Controller {
 				if (fileExists && filePath) {
 					vscode.window.showWarningMessage(`Rule file "${message.filename}" already exists.`)
 					// Still open it for editing
-					openFile(filePath)
+					await handleFileServiceRequest(this, "openFile", { value: filePath })
 					return
 				} else if (filePath && !fileExists) {
 					await refreshClineRulesToggles(this.context, cwd)
 					await this.postStateToWebview()
 
-					openFile(filePath)
+					await handleFileServiceRequest(this, "openFile", { value: filePath })
 
 					vscode.window.showInformationMessage(
 						`Created new ${message.isGlobal ? "global" : "workspace"} rule file: ${message.filename}`,
@@ -448,30 +456,12 @@ export class Controller {
 			case "openMention":
 				openMention(message.text)
 				break
-			case "checkpointRestore": {
-				await this.cancelTask() // we cannot alter message history say if the task is active, as it could be in the middle of editing a file or running a command, which expect the ask to be responded to rather than being superseded by a new message eg add deleted_api_reqs
-				// cancel task waits for any open editor to be reverted and starts a new cline instance
-				if (message.number) {
-					// wait for messages to be loaded
-					await pWaitFor(() => this.task?.isInitialized === true, {
-						timeout: 3_000,
-					}).catch(() => {
-						console.error("Failed to init new cline instance")
-					})
-					// NOTE: cancelTask awaits abortTask, which awaits diffViewProvider.revertChanges, which reverts any edited files, allowing us to reset to a checkpoint rather than running into a state where the revertChanges function is called alongside or after the checkpoint reset
-					await this.task?.restoreCheckpoint(message.number, message.text! as ClineCheckpointRestore, message.offset)
-				}
-				break
-			}
 			case "taskCompletionViewChanges": {
 				if (message.number) {
 					await this.task?.presentMultifileDiff(message.number, true)
 				}
 				break
 			}
-			case "cancelTask":
-				this.cancelTask()
-				break
 			case "getLatestState":
 				await this.postStateToWebview()
 				break
@@ -511,7 +501,7 @@ export class Controller {
 			case "openMcpSettings": {
 				const mcpSettingsFilePath = await this.mcpHub?.getMcpSettingsFilePath()
 				if (mcpSettingsFilePath) {
-					openFile(mcpSettingsFilePath)
+					await handleFileServiceRequest(this, "openFile", { value: mcpSettingsFilePath })
 				}
 				break
 			}
@@ -576,14 +566,6 @@ export class Controller {
 
 			// 	break
 			// }
-			case "toggleMcpServer": {
-				try {
-					await this.mcpHub?.toggleServerDisabled(message.serverName!, message.disabled!)
-				} catch (error) {
-					console.error(`Failed to toggle MCP server ${message.serverName}:`, error)
-				}
-				break
-			}
 			case "toggleToolAutoApprove": {
 				try {
 					await this.mcpHub?.toggleToolAutoApprove(message.serverName!, message.toolNames!, message.autoApprove!)
@@ -675,16 +657,6 @@ export class Controller {
 					} catch (error) {
 						console.error(`Error searching commits: ${JSON.stringify(error)}`)
 					}
-				}
-				break
-			}
-			case "updateMcpTimeout": {
-				try {
-					if (message.serverName && message.timeout) {
-						await this.mcpHub?.updateServerTimeout(message.serverName, message.timeout)
-					}
-				} catch (error) {
-					console.error(`Failed to update timeout for server ${message.serverName}:`, error)
 				}
 				break
 			}
@@ -1489,7 +1461,6 @@ Here is the project's README to help you get started:\n\n${mcpDetails.readmeCont
 						case "anthropic/claude-3.5-sonnet":
 						case "anthropic/claude-3.5-sonnet:beta":
 							// NOTE: this needs to be synced with api.ts/openrouter default model info
-							modelInfo.supportsComputerUse = true
 							modelInfo.supportsPromptCache = true
 							modelInfo.cacheWritesPrice = 3.75
 							modelInfo.cacheReadsPrice = 0.3
@@ -1572,7 +1543,6 @@ Here is the project's README to help you get started:\n\n${mcpDetails.readmeCont
 						maxTokens: model.max_output_tokens || undefined,
 						contextWindow: model.context_window,
 						supportsImages: model.supports_vision || undefined,
-						supportsComputerUse: model.supports_computer_use || undefined,
 						supportsPromptCache: model.supports_caching || undefined,
 						inputPrice: parsePrice(model.input_price),
 						outputPrice: parsePrice(model.output_price),
