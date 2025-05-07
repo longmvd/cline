@@ -55,6 +55,7 @@ import {
 import { ExtensionMessage } from "@shared/ExtensionMessage"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { vscode } from "@/utils/vscode"
+import { ModelsServiceClient } from "@/services/grpc-client"
 import { getAsVar, VSC_DESCRIPTION_FOREGROUND } from "@/utils/vscStyles"
 import VSCodeButtonLink from "@/components/common/VSCodeButtonLink"
 import OpenRouterModelPicker, { ModelDescriptionMarkdown, OPENROUTER_MODEL_PICKER_Z_INDEX } from "./OpenRouterModelPicker"
@@ -182,17 +183,31 @@ const ApiOptions = ({
 	}, [apiConfiguration])
 
 	// Poll ollama/lmstudio models
-	const requestLocalModels = useCallback(() => {
+	const requestLocalModels = useCallback(async () => {
 		if (selectedProvider === "ollama") {
-			vscode.postMessage({
-				type: "requestOllamaModels",
-				text: apiConfiguration?.ollamaBaseUrl,
-			})
+			try {
+				const response = await ModelsServiceClient.getOllamaModels({
+					value: apiConfiguration?.ollamaBaseUrl || "",
+				})
+				if (response && response.values) {
+					setOllamaModels(response.values)
+				}
+			} catch (error) {
+				console.error("Failed to fetch Ollama models:", error)
+				setOllamaModels([])
+			}
 		} else if (selectedProvider === "lmstudio") {
-			vscode.postMessage({
-				type: "requestLmStudioModels",
-				text: apiConfiguration?.lmStudioBaseUrl,
-			})
+			try {
+				const response = await ModelsServiceClient.getLmStudioModels({
+					value: apiConfiguration?.lmStudioBaseUrl || "",
+				})
+				if (response && response.values) {
+					setLmStudioModels(response.values)
+				}
+			} catch (error) {
+				console.error("Failed to fetch LM Studio models:", error)
+				setLmStudioModels([])
+			}
 		} else if (selectedProvider === "vscode-lm") {
 			vscode.postMessage({ type: "requestVsCodeLmModels" })
 		}
@@ -209,11 +224,7 @@ const ApiOptions = ({
 
 	const handleMessage = useCallback((event: MessageEvent) => {
 		const message: ExtensionMessage = event.data
-		if (message.type === "ollamaModels" && message.ollamaModels) {
-			setOllamaModels(message.ollamaModels)
-		} else if (message.type === "lmStudioModels" && message.lmStudioModels) {
-			setLmStudioModels(message.lmStudioModels)
-		} else if (message.type === "vsCodeLmModels" && message.vsCodeLmModels) {
+		if (message.type === "vsCodeLmModels" && message.vsCodeLmModels) {
 			setVsCodeLmModels(message.vsCodeLmModels)
 		}
 	}, [])
@@ -769,6 +780,101 @@ const ApiOptions = ({
 							</>
 						)}
 					</p>
+					<label htmlFor="bedrock-model-dropdown">
+						<span style={{ fontWeight: 500 }}>Model</span>
+					</label>
+					<DropdownContainer zIndex={DROPDOWN_Z_INDEX - 2} className="dropdown-container">
+						<VSCodeDropdown
+							id="bedrock-model-dropdown"
+							value={apiConfiguration?.awsBedrockCustomSelected ? "custom" : selectedModelId}
+							onChange={(e: any) => {
+								const isCustom = e.target.value === "custom"
+								setApiConfiguration({
+									...apiConfiguration,
+									apiModelId: isCustom ? "" : e.target.value,
+									awsBedrockCustomSelected: isCustom,
+									awsBedrockCustomModelBaseId: bedrockDefaultModelId,
+								})
+							}}
+							style={{ width: "100%" }}>
+							<VSCodeOption value="">Select a model...</VSCodeOption>
+							{Object.keys(bedrockModels).map((modelId) => (
+								<VSCodeOption
+									key={modelId}
+									value={modelId}
+									style={{
+										whiteSpace: "normal",
+										wordWrap: "break-word",
+										maxWidth: "100%",
+									}}>
+									{modelId}
+								</VSCodeOption>
+							))}
+							<VSCodeOption value="custom">Custom</VSCodeOption>
+						</VSCodeDropdown>
+					</DropdownContainer>
+					{apiConfiguration?.awsBedrockCustomSelected && (
+						<div>
+							<p
+								style={{
+									fontSize: "12px",
+									marginTop: "5px",
+									color: "var(--vscode-descriptionForeground)",
+								}}>
+								Select "Custom" when using the Application Inference Profile in Bedrock. Enter the Application
+								Inference Profile ID in the Model ID field. However, be sure to encode the / in the ARN as %2F.
+								<br />
+								Example: arn:aws:bedrock:us-west-2:&lt;AWS Account
+								ID&gt;:application-inference-profile%2Fxxxxxxxxxxxx
+							</p>
+							<label htmlFor="bedrock-model-input">
+								<span style={{ fontWeight: 500 }}>Model ID</span>
+							</label>
+							<VSCodeTextField
+								id="bedrock-model-input"
+								value={apiConfiguration?.apiModelId || ""}
+								style={{ width: "100%", marginTop: 3 }}
+								onInput={handleInputChange("apiModelId")}
+								placeholder="Enter custom model ID..."
+							/>
+							<label htmlFor="bedrock-base-model-dropdown">
+								<span style={{ fontWeight: 500 }}>Base Inference Model</span>
+							</label>
+							<DropdownContainer zIndex={DROPDOWN_Z_INDEX - 3} className="dropdown-container">
+								<VSCodeDropdown
+									id="bedrock-base-model-dropdown"
+									value={apiConfiguration?.awsBedrockCustomModelBaseId || bedrockDefaultModelId}
+									onChange={handleInputChange("awsBedrockCustomModelBaseId")}
+									style={{ width: "100%" }}>
+									<VSCodeOption value="">Select a model...</VSCodeOption>
+									{Object.keys(bedrockModels).map((modelId) => (
+										<VSCodeOption
+											key={modelId}
+											value={modelId}
+											style={{
+												whiteSpace: "normal",
+												wordWrap: "break-word",
+												maxWidth: "100%",
+											}}>
+											{modelId}
+										</VSCodeOption>
+									))}
+								</VSCodeDropdown>
+							</DropdownContainer>
+						</div>
+					)}
+					{(selectedModelId === "anthropic.claude-3-7-sonnet-20250219-v1:0" ||
+						(apiConfiguration?.awsBedrockCustomSelected &&
+							apiConfiguration?.awsBedrockCustomModelBaseId === "anthropic.claude-3-7-sonnet-20250219-v1:0")) && (
+						<ThinkingBudgetSlider apiConfiguration={apiConfiguration} setApiConfiguration={setApiConfiguration} />
+					)}
+					<ModelInfoView
+						selectedModelId={selectedModelId}
+						modelInfo={selectedModelInfo}
+						isDescriptionExpanded={isDescriptionExpanded}
+						setIsDescriptionExpanded={setIsDescriptionExpanded}
+						isPopup={isPopup}
+					/>
 				</div>
 			)}
 
@@ -1702,6 +1808,7 @@ const ApiOptions = ({
 				selectedProvider !== "vscode-lm" &&
 				selectedProvider !== "litellm" &&
 				selectedProvider !== "requesty" &&
+				selectedProvider !== "bedrock" &&
 				showModelOptions && (
 					<>
 						<DropdownContainer zIndex={DROPDOWN_Z_INDEX - 2} className="dropdown-container">
@@ -1709,7 +1816,6 @@ const ApiOptions = ({
 								<span style={{ fontWeight: 500 }}>Model</span>
 							</label>
 							{selectedProvider === "anthropic" && createDropdown(anthropicModels)}
-							{selectedProvider === "bedrock" && createDropdown(bedrockModels)}
 							{selectedProvider === "vertex" && createDropdown(vertexModels)}
 							{selectedProvider === "gemini" && createDropdown(geminiModels)}
 							{selectedProvider === "openai-native" && createDropdown(openAiNativeModels)}
@@ -1726,7 +1832,6 @@ const ApiOptions = ({
 						</DropdownContainer>
 
 						{((selectedProvider === "anthropic" && selectedModelId === "claude-3-7-sonnet-20250219") ||
-							(selectedProvider === "bedrock" && selectedModelId === "anthropic.claude-3-7-sonnet-20250219-v1:0") ||
 							(selectedProvider === "vertex" && selectedModelId === "claude-3-7-sonnet@20250219")) && (
 							<ThinkingBudgetSlider apiConfiguration={apiConfiguration} setApiConfiguration={setApiConfiguration} />
 						)}
@@ -1826,31 +1931,39 @@ export const formatPrice = (price: number) => {
 }
 
 // Returns an array of formatted tier strings
-const formatTiers = (tiers: ModelInfo["inputPriceTiers"]): JSX.Element[] => {
+const formatTiers = (
+	tiers: ModelInfo["tiers"],
+	priceType: "inputPrice" | "outputPrice" | "cacheReadsPrice" | "cacheWritesPrice",
+): JSX.Element[] => {
 	if (!tiers || tiers.length === 0) {
 		return []
 	}
-	return tiers.map((tier, index, arr) => {
-		const prevLimit = index > 0 ? arr[index - 1].tokenLimit : 0
-		return (
-			<span style={{ paddingLeft: "15px" }} key={index}>
-				{formatPrice(tier.price)}/million tokens (
-				{tier.tokenLimit === Number.POSITIVE_INFINITY ? (
-					<span>
-						{"> "}
-						{prevLimit.toLocaleString()}
-					</span>
-				) : (
-					<span>
-						{"<= "}
-						{tier.tokenLimit.toLocaleString()}
-					</span>
-				)}
-				{" tokens)"}
-				{index < arr.length - 1 && <br />}
-			</span>
-		)
-	})
+
+	return tiers
+		.map((tier, index, arr) => {
+			const prevLimit = index > 0 ? arr[index - 1].contextWindow : 0
+			const price = tier[priceType]
+
+			if (price === undefined) return null
+
+			return (
+				<span style={{ paddingLeft: "15px" }} key={index}>
+					{formatPrice(price)}/million tokens (
+					{tier.contextWindow === Number.POSITIVE_INFINITY ? (
+						<span>
+							{">"} {prevLimit.toLocaleString()}
+						</span>
+					) : (
+						<span>
+							{"<="} {tier.contextWindow.toLocaleString()}
+						</span>
+					)}
+					{" tokens)"}
+					{index < arr.length - 1 && <br />}
+				</span>
+			)
+		})
+		.filter((element): element is JSX.Element => element !== null)
 }
 
 export const ModelInfoView = ({
@@ -1868,13 +1981,14 @@ export const ModelInfoView = ({
 }) => {
 	const isGemini = Object.keys(geminiModels).includes(selectedModelId)
 	const hasThinkingConfig = !!modelInfo.thinkingConfig
+	const hasTiers = !!modelInfo.tiers && modelInfo.tiers.length > 0
 
-	// Create elements for tiered pricing separately
-	const inputPriceElement = modelInfo.inputPriceTiers ? (
+	// Create elements for input pricing
+	const inputPriceElement = hasTiers ? (
 		<Fragment key="inputPriceTiers">
 			<span style={{ fontWeight: 500 }}>Input price:</span>
 			<br />
-			{formatTiers(modelInfo.inputPriceTiers)}
+			{formatTiers(modelInfo.tiers, "inputPrice")}
 		</Fragment>
 	) : modelInfo.inputPrice !== undefined && modelInfo.inputPrice > 0 ? (
 		<span key="inputPrice">
@@ -1895,14 +2009,14 @@ export const ModelInfoView = ({
 				{formatPrice(modelInfo.thinkingConfig.outputPrice)}/million tokens
 			</Fragment>
 		)
-	} else if (modelInfo.outputPriceTiers) {
+	} else if (hasTiers) {
 		// Display tiered output pricing
 		outputPriceElement = (
 			<Fragment key="outputPriceTiers">
 				<span style={{ fontWeight: 500 }}>Output price:</span>
 				<span style={{ fontStyle: "italic" }}> (based on input tokens)</span>
 				<br />
-				{formatTiers(modelInfo.outputPriceTiers)}
+				{formatTiers(modelInfo.tiers, "outputPrice")}
 			</Fragment>
 		)
 	} else if (modelInfo.outputPrice !== undefined && modelInfo.outputPrice > 0) {
@@ -2048,6 +2162,14 @@ export function normalizeApiConfiguration(apiConfiguration?: ApiConfiguration): 
 		case "anthropic":
 			return getProviderData(anthropicModels, anthropicDefaultModelId)
 		case "bedrock":
+			if (apiConfiguration?.awsBedrockCustomSelected) {
+				const baseModelId = apiConfiguration.awsBedrockCustomModelBaseId
+				return {
+					selectedProvider: provider,
+					selectedModelId: modelId || bedrockDefaultModelId,
+					selectedModelInfo: (baseModelId && bedrockModels[baseModelId]) || bedrockModels[bedrockDefaultModelId],
+				}
+			}
 			return getProviderData(bedrockModels, bedrockDefaultModelId)
 		case "vertex":
 			return getProviderData(vertexModels, vertexDefaultModelId)

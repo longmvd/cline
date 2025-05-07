@@ -35,9 +35,7 @@ export interface ExtensionMessage {
 		| "mcpDownloadDetails"
 		| "commitSearchResults"
 		| "openGraphData"
-		| "isImageUrlResult"
 		| "didUpdateSettings"
-		| "addRemoteServerResult"
 		| "userCreditsBalance"
 		| "userCreditsUsage"
 		| "userCreditsPayments"
@@ -46,11 +44,10 @@ export interface ExtensionMessage {
 		| "browserConnectionResult"
 		| "scrollToSettings"
 		| "browserRelaunchResult"
-		| "relativePathsResponse" // Handles single and multiple path responses
 		| "fileSearchResults"
 		| "grpc_response" // New type for gRPC responses
+		| "setActiveQuote"
 	text?: string
-	paths?: (string | null)[] // Used for relativePathsResponse
 	action?:
 		| "chatButtonClicked"
 		| "mcpButtonClicked"
@@ -103,16 +100,13 @@ export interface ExtensionMessage {
 		type: "file" | "folder"
 		label?: string
 	}>
-	addRemoteServerResult?: {
-		success: boolean
-		serverName: string
-		error?: string
-	}
 	tab?: McpViewTab
 	grpc_response?: {
 		message?: any // JSON serialized protobuf message
 		request_id: string // Same ID as the request
 		error?: string // Optional error message
+		is_streaming?: boolean // Whether this is part of a streaming response
+		sequence_number?: number // For ordering chunks in streaming responses
 	}
 }
 
@@ -138,6 +132,7 @@ export interface ExtensionState {
 	shouldShowAnnouncement: boolean
 	taskHistory: HistoryItem[]
 	telemetrySetting: TelemetrySetting
+	shellIntegrationTimeout: number
 	uriScheme?: string
 	userInfo?: {
 		displayName: string | null
@@ -148,6 +143,8 @@ export interface ExtensionState {
 	vscMachineId: string
 	globalClineRulesToggles: ClineRulesToggles
 	localClineRulesToggles: ClineRulesToggles
+	localCursorRulesToggles: ClineRulesToggles
+	localWindsurfRulesToggles: ClineRulesToggles
 }
 
 export interface ClineMessage {

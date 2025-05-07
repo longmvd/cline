@@ -10,6 +10,8 @@ import { vscode } from "@/utils/vscode"
 import Thumbnails from "@/components/common/Thumbnails"
 import { normalizeApiConfiguration } from "@/components/settings/ApiOptions"
 import { validateSlashCommand } from "@/utils/slash-commands"
+import TaskTimeline from "./TaskTimeline"
+import { TaskServiceClient } from "@/services/grpc-client"
 
 interface TaskHeaderProps {
 	task: ClineMessage
@@ -34,8 +36,8 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 	lastApiReqTotalTokens,
 	onClose,
 }) => {
-	const { apiConfiguration, currentTaskItem, checkpointTrackerErrorMessage } = useExtensionState()
-	const [isTaskExpanded, setIsTaskExpanded] = useState(false)
+	const { apiConfiguration, currentTaskItem, checkpointTrackerErrorMessage, clineMessages } = useExtensionState()
+	const [isTaskExpanded, setIsTaskExpanded] = useState(true)
 	const [isTextExpanded, setIsTextExpanded] = useState(false)
 	const [showSeeMore, setShowSeeMore] = useState(false)
 	const textContainerRef = useRef<HTMLDivElement>(null)
@@ -130,13 +132,16 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 		return (
 			apiConfiguration?.apiProvider !== "vscode-lm" &&
 			apiConfiguration?.apiProvider !== "ollama" &&
-			apiConfiguration?.apiProvider !== "lmstudio" &&
-			apiConfiguration?.apiProvider !== "gemini"
+			apiConfiguration?.apiProvider !== "lmstudio"
 		)
 	}, [apiConfiguration?.apiProvider, apiConfiguration?.openAiModelInfo])
 
 	const shouldShowPromptCacheInfo =
 		doesModelSupportPromptCache && apiConfiguration?.apiProvider !== "openrouter" && apiConfiguration?.apiProvider !== "cline"
+
+	const shouldShowPromptCacheInfoClineOR =
+		doesModelSupportPromptCache &&
+		(apiConfiguration?.apiProvider === "openrouter" || apiConfiguration?.apiProvider === "cline")
 
 	const ContextWindowComponent = (
 		<>
@@ -367,7 +372,9 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 										gap: "4px",
 										flexWrap: "wrap",
 									}}>
-									<span style={{ fontWeight: "bold" }}>Tokens:</span>
+									<div style={{ display: "flex", alignItems: "center" }}>
+										<span style={{ fontWeight: "bold" }}>Tokens:</span>
+									</div>
 									<span
 										style={{
 											display: "flex",
@@ -406,6 +413,35 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 								)}
 							</div>
 
+							<TaskTimeline messages={clineMessages} />
+
+							{shouldShowPromptCacheInfoClineOR && cacheReads !== undefined && (
+								<div
+									style={{
+										display: "flex",
+										alignItems: "center",
+										gap: "4px",
+										flexWrap: "wrap",
+									}}>
+									<span style={{ fontWeight: "bold" }}>Cache:</span>
+									<span
+										style={{
+											display: "flex",
+											alignItems: "center",
+											gap: "3px",
+										}}>
+										<i
+											className="codicon codicon-arrow-right"
+											style={{
+												fontSize: "12px",
+												fontWeight: "bold",
+												marginBottom: 0,
+											}}
+										/>
+										{formatLargeNumber(cacheReads || 0)}
+									</span>
+								</div>
+							)}
 							{shouldShowPromptCacheInfo &&
 								(cacheReads !== undefined ||
 									cacheWrites !== undefined ||
@@ -639,7 +675,7 @@ const DeleteButton: React.FC<{
 }> = ({ taskSize, taskId }) => (
 	<VSCodeButton
 		appearance="icon"
-		onClick={() => vscode.postMessage({ type: "deleteTaskWithId", text: taskId })}
+		onClick={() => taskId && TaskServiceClient.deleteTasksWithIds({ value: [taskId] })}
 		style={{ padding: "0px 0px" }}>
 		<div
 			style={{

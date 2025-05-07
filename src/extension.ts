@@ -4,12 +4,14 @@ import assert from "node:assert"
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import pWaitFor from "p-wait-for"
 import * as vscode from "vscode"
+import { Controller } from "./core/controller"
 import { WebviewProvider } from "./core/webview"
 import { createClineAPI } from "./exports"
 import { DIFF_VIEW_URI_SCHEME } from "./integrations/editor/DiffViewProvider"
 import { initializeCodeTracker } from "./services/code-tracker/codeTracker"
 import { ErrorService } from "./services/error/ErrorService"
 import { Logger } from "./services/logging/Logger"
+import { posthogClientProvider } from "./services/posthog/PostHogClientProvider"
 import { telemetryService } from "./services/telemetry/TelemetryService"
 import { cleanupTestMode, initializeTestMode } from "./services/test/TestMode"
 import "./utils/path" // necessary to have access to String.prototype.toPosix
@@ -427,7 +429,28 @@ export async function activate(context: vscode.ExtensionContext) {
 			})
 		}),
 	)
+
+	// Register the generateGitCommitMessage command handler
+	context.subscriptions.push(
+		vscode.commands.registerCommand("cline.generateGitCommitMessage", async () => {
+			// Get the controller from any instance, without activating the view
+			const controller = WebviewProvider.getAllInstances()[0]?.controller
+
+			if (controller) {
+				// Call the controller method to generate commit message
+				await controller.generateGitCommitMessage()
+			} else {
+				// Create a temporary controller just for this operation
+				const outputChannel = vscode.window.createOutputChannel("Cline Commit Generator")
+				const tempController = new Controller(context, outputChannel, () => Promise.resolve(true))
+
+				await tempController.generateGitCommitMessage()
+				outputChannel.dispose()
+			}
+		}),
+	)
 	await initializeCodeTracker(context)
+
 	return createClineAPI(outputChannel, sidebarWebview.controller)
 }
 
@@ -440,11 +463,12 @@ export async function activate(context: vscode.ExtensionContext) {
 const { IS_DEV, DEV_WORKSPACE_FOLDER } = process.env
 
 // This method is called when your extension is deactivated
-export function deactivate() {
+export async function deactivate() {
+	await telemetryService.sendCollectedEvents()
+
 	// Clean up test mode
 	cleanupTestMode()
-
-	telemetryService.shutdown()
+	await posthogClientProvider.shutdown()
 	Logger.log("Cline extension deactivated")
 }
 
