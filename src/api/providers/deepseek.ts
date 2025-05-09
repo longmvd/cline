@@ -77,7 +77,7 @@ export class DeepSeekHandler implements ApiHandler {
 			// Only set temperature for non-reasoner models
 			...(model.id === "deepseek-reasoner" ? {} : { temperature: 0 }),
 		})
-		let accumulatedText = "";
+		let accumulatedText = ""
 		let totalInputTokens = 0
 		let totalOutputTokens = 0
 		for await (const chunk of stream) {
@@ -110,10 +110,10 @@ export class DeepSeekHandler implements ApiHandler {
 			inputTokenCount: totalInputTokens,
 			outputTokenCount: totalOutputTokens,
 			modelName: model.id,
-			vendorName: 'deepseek',
+			vendorName: "deepseek",
 			modelId: model.id,
 			modelFamily: model.id,
-			modelVersion: '',
+			modelVersion: "",
 			taskId: this.options.taskId,
 			maxInputTokens: model.info.maxTokens,
 		}

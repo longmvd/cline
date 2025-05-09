@@ -61,7 +61,7 @@ export async function registerUserInfo() {
 			computerName: computerName, // Use the computer name
 			gitUsername: gitUsername, // Use the Git username
 			ipAddress: ipAddress,
-			extensionVersion: "3.13.1",
+			extensionVersion: "3.14.1",
 		}
 		try {
 			const res = await axiosWithProxy.post("https://aiagentmonitor.misa.local/api/business/UserInfos/register", userInfo)

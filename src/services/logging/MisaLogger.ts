@@ -43,16 +43,16 @@ export class MsLogger {
 	private httpClient: AxiosInstance
 	private taskId?: string
 	private mode?: string
-	private logsPath: string = ''
-	private dbFilePath: string = ''
-	private jsonLogsPath: string = ''
+	private logsPath: string = ""
+	private dbFilePath: string = ""
+	private jsonLogsPath: string = ""
 	private db: Database.Database | null = null
 	private saveLogToServerJobInterval?: NodeJS.Timeout
 
 	// Default log directory name in user's home directory
-	private static readonly DEFAULT_LOG_DIRECTORY = '.cline/logs'
-	private static readonly DEFAULT_DB_FILENAME = 'cline-logs.db'
-	private static readonly DEFAULT_JSON_DIRECTORY = 'json'
+	private static readonly DEFAULT_LOG_DIRECTORY = ".cline/logs"
+	private static readonly DEFAULT_DB_FILENAME = "cline-logs.db"
+	private static readonly DEFAULT_JSON_DIRECTORY = "json"
 	// Default interval for the save log to server job (5 minutes)
 	private static readonly DEFAULT_SYNC_INTERVAL_MS = 5 * 60 * 1000
 
@@ -85,7 +85,7 @@ export class MsLogger {
 			}
 
 			// Initialize the database
-			this.db = new Database(this.dbFilePath, { verbose: process.env.NODE_ENV === 'development' ? console.log : undefined })
+			this.db = new Database(this.dbFilePath, { verbose: process.env.NODE_ENV === "development" ? console.log : undefined })
 
 			// Create tables if they don't exist
 			this.db.exec(`
@@ -196,13 +196,13 @@ export class MsLogger {
 
 	async saveLogBulkAndDeleteLocalLog(messages: LogMessageRequest[]) {
 		try {
-			const logTraceIds = messages.map((message) => message.logTraceId ?? '')
+			const logTraceIds = messages.map((message) => message.logTraceId ?? "")
 			const request = messages.map((message) => ({
 				...message,
 				userId: this.userInfo?.userId,
 				createdDate: new Date(),
 				logDate: new Date(message.logDate ?? new Date()),
-				state: 1
+				state: 1,
 			})) as LogMessage[]
 			const res = await this.httpClient.post("/save-multi", request)
 			await this.deleteLogsByTraceId(logTraceIds)
@@ -223,7 +223,7 @@ export class MsLogger {
 			createdDate: new Date(),
 			id: undefined as any, // Remove ID for server request
 			logDate: new Date(message.logDate ?? new Date()),
-			state: 1
+			state: 1,
 		})) as LogMessage[]
 		const res = await this.httpClient.post("/save-multi", request)
 	}
@@ -244,7 +244,7 @@ export class MsLogger {
 		}
 
 		try {
-			const placeholders = logTraceIds.map(() => '?').join(',')
+			const placeholders = logTraceIds.map(() => "?").join(",")
 			const stmt = this.db.prepare(`DELETE FROM log_messages WHERE logTraceId IN (${placeholders})`)
 			const info = stmt.run(logTraceIds)
 
@@ -256,8 +256,6 @@ export class MsLogger {
 			return -1
 		}
 	}
-
-
 
 	/**
 	 * Saves log message to the SQLite database
@@ -307,7 +305,6 @@ export class MsLogger {
 			console.error("Error saving log to database:", error)
 		}
 	}
-
 
 	/**
 	 * Sets the database file path, creating directories as needed
@@ -385,7 +382,7 @@ export class MsLogger {
 
 		try {
 			// Get all logs from database
-			const stmt = this.db.prepare('SELECT * FROM log_messages LIMIT 1000')
+			const stmt = this.db.prepare("SELECT * FROM log_messages LIMIT 1000")
 			const logs = stmt.all() as LogMessageRequest[]
 
 			if (!logs || logs.length === 0) {
@@ -418,7 +415,7 @@ export class MsLogger {
 					totalSent += batch.length
 
 					// Collect trace IDs for deletion
-					batch.forEach(log => {
+					batch.forEach((log) => {
 						if (log.logTraceId) {
 							logTraceIds.push(log.logTraceId)
 						}
@@ -454,7 +451,7 @@ export class MsLogger {
 			// Create directory structure by date and minute
 			const now = new Date()
 			const dateStr = now.toISOString().slice(0, 10) // YYYY-MM-DD
-			const hourMinuteStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}` // HH-MM
+			const hourMinuteStr = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}` // HH-MM
 
 			const dateDirPath = path.join(this.jsonLogsPath, dateStr)
 			const filePath = path.join(dateDirPath, `${hourMinuteStr}.json`)
@@ -467,7 +464,7 @@ export class MsLogger {
 			// Read existing logs or create a new array
 			let logs: LogMessage[] = []
 			if (fs.existsSync(filePath)) {
-				const fileContent = fs.readFileSync(filePath, 'utf8')
+				const fileContent = fs.readFileSync(filePath, "utf8")
 				try {
 					logs = JSON.parse(fileContent)
 				} catch (parseError) {
@@ -478,7 +475,7 @@ export class MsLogger {
 			}
 
 			// Calculate next ID
-			const nextId = logs.length > 0 ? Math.max(...logs.map(log => log.id)) + 1 : 1
+			const nextId = logs.length > 0 ? Math.max(...logs.map((log) => log.id)) + 1 : 1
 
 			// Format log message with user info and metadata including ID
 			const logMessage: LogMessage = {
@@ -522,28 +519,28 @@ export class MsLogger {
 			const currentDateStr = now.toISOString().slice(0, 10) // YYYY-MM-DD
 			const currentHour = now.getHours()
 			const currentMinute = now.getMinutes()
-			const currentTimeStr = `${String(currentHour).padStart(2, '0')}-${String(currentMinute).padStart(2, '0')}` // HH-MM
+			const currentTimeStr = `${String(currentHour).padStart(2, "0")}-${String(currentMinute).padStart(2, "0")}` // HH-MM
 
 			// Get date directories that are <= current date
-			const dateDirs = fs.readdirSync(this.jsonLogsPath)
-				.filter(item => {
-					const dirPath = path.join(this.jsonLogsPath, item)
-					return fs.statSync(dirPath).isDirectory() && item <= currentDateStr
-				})
+			const dateDirs = fs.readdirSync(this.jsonLogsPath).filter((item) => {
+				const dirPath = path.join(this.jsonLogsPath, item)
+				return fs.statSync(dirPath).isDirectory() && item <= currentDateStr
+			})
 
 			const jsonFiles: string[] = []
-			dateDirs.forEach(dateDir => {
+			dateDirs.forEach((dateDir) => {
 				const dateDirPath = path.join(this.jsonLogsPath, dateDir)
-				const files = fs.readdirSync(dateDirPath)
-					.filter(file => {
+				const files = fs
+					.readdirSync(dateDirPath)
+					.filter((file) => {
 						// For previous dates, include all files
-						if (dateDir < currentDateStr) return file.endsWith('.json')
+						if (dateDir < currentDateStr) return file.endsWith(".json")
 
 						// For current date, only include files with minutes < current minute
-						const fileMinute = path.basename(file, '.json')
-						return file.endsWith('.json') && fileMinute < currentTimeStr
+						const fileMinute = path.basename(file, ".json")
+						return file.endsWith(".json") && fileMinute < currentTimeStr
 					})
-					.map(file => path.join(dateDirPath, file))
+					.map((file) => path.join(dateDirPath, file))
 				if (dateDir < currentDateStr && files.length === 0) {
 					// If the date directory is empty, delete it
 					fs.rmdirSync(dateDirPath)
@@ -562,9 +559,9 @@ export class MsLogger {
 			const allLogs: LogMessageRequest[] = []
 			const fileLogsMap = new Map<string, LogMessageRequest[]>()
 
-			jsonFiles.forEach(file => {
+			jsonFiles.forEach((file) => {
 				try {
-					const fileContent = fs.readFileSync(file, 'utf8')
+					const fileContent = fs.readFileSync(file, "utf8")
 					const logs = JSON.parse(fileContent) as LogMessageRequest[]
 					if (logs && logs.length > 0) {
 						fileLogsMap.set(file, logs)
@@ -604,7 +601,7 @@ export class MsLogger {
 					totalSent += batch.length
 
 					// Collect trace IDs of sent logs
-					batch.forEach(log => {
+					batch.forEach((log) => {
 						if (log.logTraceId) {
 							sentLogTraceIds.add(log.logTraceId)
 						}
@@ -620,7 +617,7 @@ export class MsLogger {
 			// Remove sent logs from files
 			if (sentLogTraceIds.size > 0) {
 				fileLogsMap.forEach((logs, file) => {
-					const remainingLogs = logs.filter(log => !log.logTraceId || !sentLogTraceIds.has(log.logTraceId))
+					const remainingLogs = logs.filter((log) => !log.logTraceId || !sentLogTraceIds.has(log.logTraceId))
 
 					if (remainingLogs.length === 0) {
 						// If no logs remain, delete the file
