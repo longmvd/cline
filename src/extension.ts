@@ -11,10 +11,11 @@ import { DIFF_VIEW_URI_SCHEME } from "./integrations/editor/DiffViewProvider"
 import { initializeCodeTracker } from "./services/code-tracker/codeTracker"
 import { ErrorService } from "./services/error/ErrorService"
 import { Logger } from "./services/logging/Logger"
+import { MsLogger } from "./services/logging/MisaLogger"
 import { posthogClientProvider } from "./services/posthog/PostHogClientProvider"
-import { telemetryService } from "./services/telemetry/TelemetryService"
+import { telemetryService } from "./services/posthog/telemetry/TelemetryService"
 import { cleanupTestMode, initializeTestMode } from "./services/test/TestMode"
-import "./utils/path" // necessary to have access to String.prototype.toPosix
+import "./utils/path"; // necessary to have access to String.prototype.toPosix
 import { registerUserInfo } from "./utils/user-info.utils"
 
 /*
@@ -465,7 +466,7 @@ const { IS_DEV, DEV_WORKSPACE_FOLDER } = process.env
 // This method is called when your extension is deactivated
 export async function deactivate() {
 	await telemetryService.sendCollectedEvents()
-
+	await MsLogger.deactivate()
 	// Clean up test mode
 	cleanupTestMode()
 	await posthogClientProvider.shutdown()

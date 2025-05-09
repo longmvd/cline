@@ -1,12 +1,13 @@
+import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
 import { Anthropic } from "@anthropic-ai/sdk"
-import OpenAI from "openai"
-import { withRetry } from "../retry"
-import { ApiHandler } from "../"
 import { ApiHandlerOptions, DeepSeekModelId, ModelInfo, deepSeekDefaultModelId, deepSeekModels } from "@shared/api"
+import OpenAI from "openai"
+import { ApiHandler } from "../"
 import { calculateApiCostOpenAI } from "../../utils/cost"
+import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
-import { ApiStream } from "../transform/stream"
 import { convertToR1Format } from "../transform/r1-format"
+import { ApiStream } from "../transform/stream"
 
 export class DeepSeekHandler implements ApiHandler {
 	private options: ApiHandlerOptions
@@ -76,10 +77,15 @@ export class DeepSeekHandler implements ApiHandler {
 			// Only set temperature for non-reasoner models
 			...(model.id === "deepseek-reasoner" ? {} : { temperature: 0 }),
 		})
-
+		let accumulatedText = "";
+		let totalInputTokens = 0
+		let totalOutputTokens = 0
 		for await (const chunk of stream) {
 			const delta = chunk.choices[0]?.delta
 			if (delta?.content) {
+				accumulatedText += delta.content
+				totalInputTokens = chunk.usage?.prompt_tokens || 0
+				totalOutputTokens = chunk.usage?.completion_tokens || 0
 				yield {
 					type: "text",
 					text: delta.content,
@@ -97,6 +103,23 @@ export class DeepSeekHandler implements ApiHandler {
 				yield* this.yieldUsage(model.info, chunk.usage)
 			}
 		}
+		//#region MSLogging
+		const logMessage: LogMessageRequest = {
+			request: openAiMessages.map((msg) => JSON.stringify(msg)).join("\n"),
+			response: accumulatedText,
+			inputTokenCount: totalInputTokens,
+			outputTokenCount: totalOutputTokens,
+			modelName: model.id,
+			vendorName: 'deepseek',
+			modelId: model.id,
+			modelFamily: model.id,
+			modelVersion: '',
+			taskId: this.options.taskId,
+			maxInputTokens: model.info.maxTokens,
+		}
+		const msLogger = await MsLogger.getInstance()
+		msLogger.saveLog(logMessage)
+		//#endregion MSLogging
 	}
 
 	getModel(): { id: DeepSeekModelId; info: ModelInfo } {

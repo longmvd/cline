@@ -349,6 +349,7 @@
 	},
 	"devDependencies": {
 		"@changesets/cli": "^2.27.12",
+		"@types/better-sqlite3": "^7.6.13",
 		"@types/chai": "^5.0.1",
 		"@types/clone-deep": "^4.0.4",
 		"@types/diff": "^5.2.1",
@@ -404,6 +405,8 @@
 		"@sentry/browser": "^9.12.0",
 		"@vscode/codicons": "^0.0.36",
 		"axios": "^1.8.2",
+		"better-sqlite3": "^11.10.0",
+		"bindings": "^1.5.0",
 		"cheerio": "^1.0.0",
 		"chokidar": "^4.0.1",
 		"chrome-launcher": "^1.1.2",

@@ -1,5 +1,6 @@
 import type { Anthropic } from "@anthropic-ai/sdk"
 // Restore GenerateContentConfig import and add GenerateContentResponseUsageMetadata
+import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
 import { GoogleGenAI, type Content, type GenerateContentConfig, type GenerateContentResponseUsageMetadata } from "@google/genai"
 import { ApiHandlerOptions, geminiDefaultModelId, GeminiModelId, geminiModels, ModelInfo } from "@shared/api"
 import NodeCache from "node-cache"
@@ -191,6 +192,7 @@ export class GeminiHandler implements ApiHandler {
 		// Process the stream
 		for await (const chunk of result) {
 			if (chunk.text) {
+				accumulatedText += chunk.text
 				yield {
 					type: "text",
 					text: chunk.text,
@@ -238,6 +240,23 @@ export class GeminiHandler implements ApiHandler {
 				totalCost,
 			}
 		}
+		//#region MSLogging
+		const logMessage: LogMessageRequest = {
+			request: cachedContent ?? contents.map((msg) => JSON.stringify(msg)).join("\n"),
+			response: accumulatedText,
+			inputTokenCount: lastUsageMetadata?.promptTokenCount ?? 0,
+			outputTokenCount: lastUsageMetadata?.candidatesTokenCount ?? 0,
+			modelName: model,
+			vendorName: 'gemini',
+			modelId: model,
+			modelFamily: model,
+			modelVersion: '',
+			taskId: this.options.taskId,
+			maxInputTokens: info.maxTokens,
+		}
+		const msLogger = await MsLogger.getInstance()
+		msLogger.saveLog(logMessage)
+		//#endregion MSLogging
 	}
 
 	/**
