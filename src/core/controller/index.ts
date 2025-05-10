@@ -1,6 +1,5 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import axios from "axios"
-import type { AxiosRequestConfig } from "axios"
 
 import fs from "fs/promises"
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
@@ -67,7 +66,7 @@ export class Controller {
 	workspaceTracker: WorkspaceTracker
 	mcpHub: McpHub
 	accountService: ClineAccountService
-	private latestAnnouncementId = "may-02-2025_16:27:00" // update to some unique identifier when we add a new announcement
+	private latestAnnouncementId = "may-09-2025_17:11:00" // update to some unique identifier when we add a new announcement
 
 	constructor(
 		readonly context: vscode.ExtensionContext,
@@ -275,6 +274,9 @@ export class Controller {
 			case "condense":
 				this.task?.handleWebviewAskResponse("yesButtonClicked")
 				break
+			case "reportBug":
+				this.task?.handleWebviewAskResponse("yesButtonClicked")
+				break
 			case "apiConfiguration":
 				if (message.apiConfiguration) {
 					await updateApiConfiguration(this.context, message.apiConfiguration)
@@ -334,11 +336,6 @@ export class Controller {
 				break
 			case "refreshRequestyModels":
 				await this.refreshRequestyModels()
-				break
-			case "refreshOpenAiModels":
-				const { apiConfiguration } = await getAllExtensionState(this.context)
-				const openAiModels = await this.getOpenAiModels(apiConfiguration.openAiBaseUrl, apiConfiguration.openAiApiKey)
-				this.postMessageToWebview({ type: "openAiModels", openAiModels })
 				break
 			case "refreshClineRules":
 				await refreshClineRulesToggles(this.context, cwd)
@@ -1114,32 +1111,6 @@ Here is the project's README to help you get started:\n\n${mcpDetails.readmeCont
 				type: "mcpDownloadDetails",
 				error: errorMessage,
 			})
-		}
-	}
-
-	// OpenAi
-
-	async getOpenAiModels(baseUrl?: string, apiKey?: string) {
-		try {
-			if (!baseUrl) {
-				return []
-			}
-
-			if (!URL.canParse(baseUrl)) {
-				return []
-			}
-
-			const config: AxiosRequestConfig = {}
-			if (apiKey) {
-				config["headers"] = { Authorization: `Bearer ${apiKey}` }
-			}
-
-			const response = await axios.get(`${baseUrl}/models`, config)
-			const modelsArray = response.data?.data?.map((model: any) => model.id) || []
-			const models = [...new Set<string>(modelsArray)]
-			return models
-		} catch (error) {
-			return []
 		}
 	}
 
