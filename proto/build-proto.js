@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
+import chalk from "chalk"
+import { execSync } from "child_process"
 import * as fs from "fs/promises"
+import { globby } from "globby"
 import * as path from "path"
 import { fileURLToPath } from "url"
-import { execSync } from "child_process"
-import { globby } from "globby"
-import chalk from "chalk"
 
 import { createRequire } from "module"
 const require = createRequire(import.meta.url)
@@ -15,6 +15,7 @@ const tsProtoPlugin = require.resolve("ts-proto/protoc-gen-ts_proto")
 const __filename = fileURLToPath(import.meta.url)
 const SCRIPT_DIR = path.dirname(__filename)
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..")
+const TS_PROTO_WRAPPER = path.join(SCRIPT_DIR, "protoc-gen-ts_proto.cmd")
 
 // List of gRPC services
 // To add a new service, simply add it to this map and run this script
@@ -53,6 +54,12 @@ async function main() {
 	// Check for missing proto files for services in serviceNameMap
 	await ensureProtoFilesExist()
 
+	// Ensure Windows wrapper for protoc-gen-ts_proto exists
+	if (process.platform === "win32") {
+		const wrapperContent = `@echo off\r\nnode "${tsProtoPlugin}" %*\r\n`
+		await fs.writeFile(TS_PROTO_WRAPPER, wrapperContent)
+	}
+
 	// Process all proto files
 	console.log(chalk.cyan("Processing proto files from"), SCRIPT_DIR)
 	const protoFiles = await globby("*.proto", { cwd: SCRIPT_DIR })
@@ -60,19 +67,27 @@ async function main() {
 	for (const protoFile of protoFiles) {
 		console.log(chalk.cyan(`Generating TypeScript code for ${protoFile}...`))
 
+		// Use wrapper on Windows, direct JS file on other platforms
+		const pluginArg =
+			process.platform === "win32"
+				? `--plugin=protoc-gen-ts_proto=${TS_PROTO_WRAPPER}`
+				: `--plugin=protoc-gen-ts_proto=${tsProtoPlugin}`
+
 		// Build the protoc command with proper path handling for cross-platform
 		const protocCommand = [
 			protoc,
-			`--plugin=protoc-gen-ts_proto="${tsProtoPlugin}"`,
-			`--ts_proto_out="${TS_OUT_DIR}"`,
+			pluginArg,
+			`--ts_proto_out=${TS_OUT_DIR}`,
 			"--ts_proto_opt=outputServices=generic-definitions,env=node,esModuleInterop=true,useDate=false,useOptionals=messages",
-			`--proto_path="${SCRIPT_DIR}"`,
-			`"${path.join(SCRIPT_DIR, protoFile)}"`,
+			`--proto_path=${SCRIPT_DIR}`,
+			`--proto_path=${ROOT_DIR}/node_modules`,
+			protoFile,
 		].join(" ")
 
 		try {
 			const execOptions = {
 				stdio: "inherit",
+				cwd: SCRIPT_DIR, // Ensure relative paths work
 			}
 			execSync(protocCommand, execOptions)
 		} catch (error) {
