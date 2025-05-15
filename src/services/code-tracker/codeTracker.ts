@@ -4,7 +4,7 @@ import * as vscode from "vscode"
 // import { getExtensionContext } from '../extension';
 import { getUserInfo } from "../../utils/user-info.utils"
 import { codeStatsApi } from "./code-stat.api"
-import { CodeStats } from "./code-stats.model"
+import { CodeStats, CommitInfo } from "./code-stats.model"
 import { getConfig } from "./configService" // Import hàm lấy config
 import { createBasicProjectInfo } from "./project"
 // import { getCurrentProject, isProjectTrackable } from './project';
@@ -68,7 +68,7 @@ function initializeGitPath(): void {
 }
 
 // Thực thi lệnh Git (Tăng cường Logging Lỗi)
-async function executeGitCommand(cwd: string, command: string): Promise<string> {
+export async function executeGitCommand(cwd: string, command: string): Promise<string> {
 	try {
 		// Kiểm tra xem Git đã được khởi tạo chưa
 		if (gitExecutablePath === null) {
@@ -77,12 +77,12 @@ async function executeGitCommand(cwd: string, command: string): Promise<string> 
 
 		// Nếu không tìm thấy Git, báo lỗi
 		if (!gitExecutablePath) {
-			console.log(`[GitScanner] Cannot execute Git command: Git not found on this system`)
+			log(`[GitScanner] Cannot execute Git command: Git not found on this system`)
 			return ""
 		}
 
 		const { execSync } = require("child_process")
-		console.log(`[GitSCMD] Executing in ${cwd}: ${command}`)
+		log(`[GitSCMD] Executing in ${cwd}: ${command}`)
 
 		// Tạo lệnh với đường dẫn đầy đủ đến git.exe
 		// Thêm dấu ngoặc kép cho đường dẫn để xử lý khoảng trắng
@@ -112,32 +112,32 @@ async function executeGitCommand(cwd: string, command: string): Promise<string> 
 		// Lọc bỏ các cảnh báo SSL từ kết quả
 		const filteredOutput = stdout?.trim() ?? "" // Lấy output và trim
 		// Log output (có thể rất dài, cân nhắc bỏ nếu quá nhiều)
-		// console.log(`[GitSCMD] Output for "${command}":\n${filteredOutput}`);
+		// log(`[GitSCMD] Output for "${command}":\n${filteredOutput}`);
 
 		// Nếu thành công, trả về output sau khi đã làm sạch
 		return filteredOutput
 	} catch (error: any) {
-		console.log(`[GitSCMD][Error] Command failed: ${command} in ${cwd}`)
-		console.log(`[GitSCMD][Error] Message: ${error.message}`)
+		log(`[GitSCMD][Error] Command failed: ${command} in ${cwd}`)
+		log(`[GitSCMD][Error] Message: ${error.message}`)
 		if (error.stderr) {
-			console.log(`[GitSCMD][Error] Stderr: ${error.stderr.toString()}`)
+			log(`[GitSCMD][Error] Stderr: ${error.stderr.toString()}`)
 		}
 		if (error.stdout) {
-			console.log(`[GitSCMD][Error] Stdout: ${error.stdout.toString()}`)
+			log(`[GitSCMD][Error] Stdout: ${error.stdout.toString()}`)
 		}
 		if (error.status) {
-			console.log(`[GitSCMD][Error] Status: ${error.status}`)
+			log(`[GitSCMD][Error] Status: ${error.status}`)
 		}
 		if (error.signal) {
-			console.log(`[GitSCMD][Error] Signal: ${error.signal}`)
+			log(`[GitSCMD][Error] Signal: ${error.signal}`)
 		}
 		if (error.stack) {
-			console.log(`[GitSCMD][Error] Stack: ${error.stack}`)
+			log(`[GitSCMD][Error] Stack: ${error.stack}`)
 		}
 
 		if (error.message.includes("not recognized") || error.message.includes("not found")) {
-			console.log(`[GitScanner] Git execution failed: Git command not found or not accessible`)
-			console.log(`[GitScanner] Please make sure Git is installed and in your PATH`)
+			log(`[GitScanner] Git execution failed: Git command not found or not accessible`)
+			log(`[GitScanner] Please make sure Git is installed and in your PATH`)
 
 			// Đặt lại gitExecutablePath để thử tìm lại vào lần chạy tiếp theo
 			gitExecutablePath = null
@@ -340,10 +340,10 @@ export async function scanGitRepositoryForCommits(context: vscode.ExtensionConte
 		const COMMITS_TO_CHECK = config.commits_to_check
 
 		// 2. Lấy danh sách hash commit LOCAL gần đây để xử lý/cập nhật
-		let localCommitsToCheck: string[] = []
+		let localCommitsToCheck: CommitInfo[] = []
 		try {
 			// Lấy N commit gần nhất từ HEAD, sử dụng giá trị từ config
-			let localLogCommand = `log --format="%H" --reverse -n ${COMMITS_TO_CHECK} HEAD`
+			let localLogCommand = `log --format="%H|%an|%ae" --reverse -n ${COMMITS_TO_CHECK} HEAD`
 			console.log(
 				`[GitScanner] Fetching last ${COMMITS_TO_CHECK} local commits for processing/update using command: ${localLogCommand}`,
 			)
@@ -351,7 +351,16 @@ export async function scanGitRepositoryForCommits(context: vscode.ExtensionConte
 			if (localLogOutput) {
 				let fetchedCommits = localLogOutput.split("\n").filter(Boolean)
 				console.log(`[GitScanner] Fetched ${fetchedCommits.length} recent local commits.`)
-
+				localCommitsToCheck = fetchedCommits
+					.map((line) => {
+						const parts = line.split("|")
+						return {
+							hash: parts[0] || "",
+							authorName: parts[1] || "Unknown Author",
+							authorEmail: parts[2] || "unknown@example.com",
+						}
+					})
+					.filter((commit) => commit.hash) // Lọc bỏ các dòng không parse được hash
 				// Lọc bớt những commit đã xử lý (commit <= lastProcessedCommitHash) -- BỎ LỌC NÀY
 				// if (lastProcessedCommitHash) {
 				//   const lastProcessedIndex = fetchedCommits.indexOf(lastProcessedCommitHash);
@@ -370,7 +379,7 @@ export async function scanGitRepositoryForCommits(context: vscode.ExtensionConte
 				//   console.log(`[GitScanner] No last processed commit known, processing all ${localCommitsToCheck.length} fetched commits.`);
 				// }
 				// THAY THẾ BẰNG: Luôn xử lý N commit gần nhất để cập nhật trạng thái
-				localCommitsToCheck = fetchedCommits
+				// localCommitsToCheck = fetchedCommits
 				console.log(`[GitScanner] Preparing to process/update the latest ${localCommitsToCheck.length} commits.`)
 			} else {
 				console.log(`[GitScanner] No local commits found using log -n ${COMMITS_TO_CHECK}.`)
@@ -461,7 +470,7 @@ async function findGitRoot(startPath: string): Promise<string | null> {
 
 // Hàm để xử lý các commit tìm thấy (Logic này giờ sẽ xử lý cả cập nhật is_published)
 async function processCommits(
-	commitsToCheck: string[], // Danh sách commit cần kiểm tra/xử lý
+	commitsToCheck: CommitInfo[], // Danh sách commit cần kiểm tra/xử lý
 	gitRootPath: string,
 	gitScanChannel: vscode.OutputChannel,
 	pushedCommitHashes: Set<string>, // Set các hash đã push
@@ -479,7 +488,8 @@ async function processCommits(
 
 	let latestCommitProcessedInThisRun: string | null = null
 
-	for (const commitId of commitsToCheck) {
+	for (const commit of commitsToCheck) {
+		const commitId = commit.hash
 		// Xác định trạng thái published MONG MUỐN dựa trên set hash đã push
 		const desiredIsPublished = pushedCommitHashes.has(commitId)
 		const status = desiredIsPublished ? "Published" : "Local"
@@ -562,6 +572,9 @@ async function processCommits(
 					// aICodeLines: aiCodeLines,
 					languageStats: "",
 					isPublished: desiredIsPublished,
+					authorEmail: commit.authorEmail,
+					authorName: commit.authorName,
+					createdBy: userInfo.computerName,
 				})
 				gitScanChannel.appendLine(
 					`[Processor] Saved ${status} commit ${commitId.substr(0, 8)}: +${stats.additions} -${stats.deletions} (${stats.filesChanged} files)`,

@@ -17,4 +17,12 @@ export interface CodeStats {
 	modifiedBy?: string | null // Người sửa
 	projectName?: string | null // Tên dự án
 	projectId?: number // ID của dự án
+	authorName?: string | null // Tên tác giả
+	authorEmail?: string | null // Email tác giả
+}
+
+export interface CommitInfo {
+	hash: string
+	authorName: string
+	authorEmail: string
 }

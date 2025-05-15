@@ -577,7 +577,7 @@ export class MsLogger {
 			}
 
 			// Process logs in batches
-			const batchSize = 50
+			const batchSize = 10
 			const batches: LogMessageRequest[][] = []
 
 			for (let i = 0; i < allLogs.length; i += batchSize) {
