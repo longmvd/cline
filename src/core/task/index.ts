@@ -249,7 +249,7 @@ export class Task {
 		MsLogger.getInstance().then((logger) => {
 			logger.setTaskId(this.taskId)
 			logger.setMode(chatSettings.mode)
-			logger.createSaveLogToServerJob()
+			// logger.createSaveLogToServerJob()
 		})
 	}
 

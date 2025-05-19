@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from "axios"
 import Database from "better-sqlite3"
-import { randomUUID } from "crypto"
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "crypto"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
@@ -46,6 +46,7 @@ export class MsLogger {
 	private logsPath: string = ""
 	private dbFilePath: string = ""
 	private jsonLogsPath: string = ""
+	private encryptedJsonLogsPath: string = ""
 	private db: Database.Database | null = null
 	private saveLogToServerJobInterval?: NodeJS.Timeout
 
@@ -53,6 +54,9 @@ export class MsLogger {
 	private static readonly DEFAULT_LOG_DIRECTORY = ".cline/logs"
 	private static readonly DEFAULT_DB_FILENAME = "cline-logs.db"
 	private static readonly DEFAULT_JSON_DIRECTORY = "json"
+	private static readonly DEFAULT_ENCRYPTED_JSON_DIRECTORY = "encrypted-json"
+	// Encryption key (should be stored securely, e.g., environment variable or secrets manager)
+	private static readonly ENCRYPTION_KEY = "your-32-byte-secure-encryption-k" // Replace with a real key
 	// Default interval for the save log to server job (5 minutes)
 	private static readonly DEFAULT_SYNC_INTERVAL_MS = 5 * 60 * 1000
 
@@ -170,7 +174,8 @@ export class MsLogger {
 		// Save to SQLite
 		// await this.saveLogToSqlite(message)
 		// Save to JSON file
-		await this.saveLogToJson(message)
+		// await this.saveLogToJson(message)
+		await this.saveLogToServer(message)
 	}
 
 	async saveLogToServer(message: LogMessageRequest) {
@@ -189,9 +194,170 @@ export class MsLogger {
 			const res = await this.httpClient.post("/save-multi", param)
 		} catch (error) {
 			Logger.log("Error saving log: " + JSON.stringify(error))
-			vscode.window.showErrorMessage("Lỗi ghi log vui lòng liên hệ với TeamAI hoặc GĐTC.")
+			// save encrypted log to local
+			await this.encryptAndSaveLog(message) // Pass the original message
+			// vscode.window.showErrorMessage("Lỗi ghi log vui lòng liên hệ với TeamAI hoặc GĐTC.")
 			console.error("Error saving log:", error)
 		}
+	}
+
+	/**
+	 * Encrypts and saves log to JSON file when server connection fails
+	 * @param message Log message to encrypt and save
+	 */
+	async encryptAndSaveLog(message: LogMessageRequest): Promise<void> {
+		try {
+			// Create directory structure by date and minute
+			const now = new Date()
+			const dateStr = now.toISOString().slice(0, 10) // YYYY-MM-DD
+			const hourMinuteStr = `${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}` // HH-MM
+
+			const dateDirPath = path.join(this.encryptedJsonLogsPath, dateStr)
+			const filePath = path.join(dateDirPath, `${hourMinuteStr}.json`)
+
+			// Ensure date directory exists
+			if (!fs.existsSync(dateDirPath)) {
+				fs.mkdirSync(dateDirPath, { recursive: true })
+			}
+
+			// Read existing logs or create a new array
+			let logs: { iv: string; encryptedData: string; authTag: string }[] = []
+			if (fs.existsSync(filePath)) {
+				const fileContent = fs.readFileSync(filePath, "utf8")
+				try {
+					logs = JSON.parse(fileContent)
+				} catch (parseError) {
+					Logger.log(`Error parsing existing encrypted JSON log file: ${filePath}`)
+					logs = []
+				}
+			}
+
+			// Encrypt the log message
+			const ivBuffer = randomBytes(12) // Initialization vector for GCM, returns Buffer
+			const ivForCipher: NodeJS.TypedArray = new Uint8Array(ivBuffer) // Explicitly use Uint8Array
+
+			const keyString = MsLogger.ENCRYPTION_KEY
+			const keyBuffer = Buffer.from(keyString, "utf8")
+
+			// Ensure the key is 32 bytes for aes-256-gcm.
+			// The placeholder key is 32 chars, resulting in 32 bytes if all are ASCII.
+			if (keyBuffer.length !== 32) {
+				Logger.log(`Encryption key is ${keyBuffer.length} bytes, but must be 32 bytes for aes-256-gcm.`)
+				// Handle error appropriately, e.g., by not attempting encryption or throwing.
+				// For now, this will proceed and likely cause a runtime error if key length is wrong.
+				// A production system should ensure the key is correctly configured.
+			}
+
+			const keyForCipher: NodeJS.TypedArray = new Uint8Array(keyBuffer) // Explicitly use Uint8Array to satisfy type checker
+
+			const cipher = createCipheriv("aes-256-gcm", keyForCipher, ivForCipher)
+			let encrypted = cipher.update(JSON.stringify(message), "utf8", "hex")
+			encrypted += cipher.final("hex")
+			const authTag = cipher.getAuthTag().toString("hex")
+
+			const encryptedLogEntry = {
+				iv: ivBuffer.toString("hex"),
+				encryptedData: encrypted,
+				authTag: authTag,
+			}
+
+			logs.push(encryptedLogEntry)
+
+			fs.writeFileSync(filePath, JSON.stringify(logs, null, 2))
+			Logger.log(`Encrypted log saved to JSON file: ${filePath}`)
+		} catch (error) {
+			Logger.log("Error encrypting and saving log to JSON file: " + JSON.stringify(error))
+			console.error("Error encrypting and saving log to JSON file:", error)
+		}
+	}
+
+	/**
+	 * Decrypts a log entry that was encrypted with AES-256-GCM
+	 * @param encryptedEntry The encrypted entry containing iv, encryptedData, and authTag
+	 * @returns The decrypted log message
+	 */
+	decryptLog(encryptedEntry: { iv: string; encryptedData: string; authTag: string }): LogMessageRequest | null {
+		try {
+			// Convert hex strings back to buffers
+			const ivBuffer = Buffer.from(encryptedEntry.iv, "hex")
+			const ivForDecipher: NodeJS.TypedArray = new Uint8Array(ivBuffer)
+
+			const keyString = MsLogger.ENCRYPTION_KEY
+			const keyBuffer = Buffer.from(keyString, "utf8")
+			const keyForDecipher: NodeJS.TypedArray = new Uint8Array(keyBuffer)
+
+			// Create the decipher
+			const decipher = createDecipheriv("aes-256-gcm", keyForDecipher, ivForDecipher)
+			const authTagBuffer = Buffer.from(encryptedEntry.authTag, "hex")
+			decipher.setAuthTag(new Uint8Array(authTagBuffer)) // Explicitly use Uint8Array
+
+			// Decrypt the data
+			let decrypted = decipher.update(encryptedEntry.encryptedData, "hex", "utf8")
+			decrypted += decipher.final("utf8")
+
+			// Parse the JSON string back to an object
+			return JSON.parse(decrypted) as LogMessageRequest
+		} catch (error) {
+			Logger.log("Error decrypting log: " + JSON.stringify(error))
+			console.error("Error decrypting log:", error)
+			return null
+		}
+	}
+
+	/**
+	 * Reads and decrypts all encrypted logs from the specified directory.
+	 * @param date Optional date string (YYYY-MM-DD) to filter logs by. If not provided, reads all.
+	 * @param hourMinute Optional hour-minute string (HH-MM) to filter logs by. Requires date to be set.
+	 * @returns A promise resolving to an array of decrypted log messages.
+	 */
+	async readEncryptedLogs(date?: string, hourMinute?: string): Promise<LogMessageRequest[]> {
+		const decryptedLogs: LogMessageRequest[] = []
+		const processFile = (filePath: string) => {
+			if (fs.existsSync(filePath)) {
+				const fileContent = fs.readFileSync(filePath, "utf8")
+				try {
+					const encryptedEntries = JSON.parse(fileContent) as { iv: string; encryptedData: string; authTag: string }[]
+					for (const entry of encryptedEntries) {
+						const decryptedLog = this.decryptLog(entry)
+						if (decryptedLog) {
+							decryptedLogs.push(decryptedLog)
+						}
+					}
+				} catch (error) {
+					Logger.log(`Error processing encrypted log file ${filePath}: ${JSON.stringify(error)}`)
+				}
+			}
+		}
+
+		if (date && hourMinute) {
+			const dateDirPath = path.join(this.encryptedJsonLogsPath, date)
+			const filePath = path.join(dateDirPath, `${hourMinute}.json`)
+			processFile(filePath)
+		} else if (date) {
+			const dateDirPath = path.join(this.encryptedJsonLogsPath, date)
+			if (fs.existsSync(dateDirPath)) {
+				const files = fs.readdirSync(dateDirPath).filter((file) => file.endsWith(".json"))
+				files.forEach((file) => {
+					processFile(path.join(dateDirPath, file))
+				})
+			}
+		} else {
+			// Read all files in all date directories
+			if (fs.existsSync(this.encryptedJsonLogsPath)) {
+				const dateDirs = fs.readdirSync(this.encryptedJsonLogsPath).filter((item) => {
+					const dirPath = path.join(this.encryptedJsonLogsPath, item)
+					return fs.statSync(dirPath).isDirectory()
+				})
+				dateDirs.forEach((dateDir) => {
+					const dateDirPath = path.join(this.encryptedJsonLogsPath, dateDir)
+					const files = fs.readdirSync(dateDirPath).filter((file) => file.endsWith(".json"))
+					files.forEach((file) => {
+						processFile(path.join(dateDirPath, file))
+					})
+				})
+			}
+		}
+		return decryptedLogs
 	}
 
 	async saveLogBulkAndDeleteLocalLog(messages: LogMessageRequest[]) {
@@ -319,6 +485,7 @@ export class MsLogger {
 		this.logsPath = logDirPath
 		this.dbFilePath = path.join(this.logsPath, filename)
 		this.jsonLogsPath = path.join(this.logsPath, MsLogger.DEFAULT_JSON_DIRECTORY)
+		this.encryptedJsonLogsPath = path.join(this.logsPath, MsLogger.DEFAULT_ENCRYPTED_JSON_DIRECTORY)
 
 		// Ensure log directories exist
 		if (!fs.existsSync(this.logsPath)) {
@@ -326,6 +493,9 @@ export class MsLogger {
 		}
 		if (!fs.existsSync(this.jsonLogsPath)) {
 			fs.mkdirSync(this.jsonLogsPath, { recursive: true })
+		}
+		if (!fs.existsSync(this.encryptedJsonLogsPath)) {
+			fs.mkdirSync(this.encryptedJsonLogsPath, { recursive: true })
 		}
 	}
 

@@ -519,7 +519,7 @@ export class VsCodeLmHandler implements ApiHandler, SingleCompletionHandler {
 
 			//#region MSLogging
 			const logMessage: LogMessageRequest = {
-				request: vsCodeLmMessages.map((msg) => JSON.stringify(msg)).join("\n"),
+				request: JSON.stringify(cleanedMessages[cleanedMessages.length - 1]), //.map((msg) => JSON.stringify(msg)).join("\n"),
 				response: accumulatedText,
 				inputTokenCount: totalInputTokens,
 				outputTokenCount: totalOutputTokens,
