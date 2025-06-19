@@ -1,12 +1,12 @@
-import { TaskFavoriteRequest } from "@/shared/proto/task"
 import { Controller } from "../"
 import { Empty } from "../../../shared/proto/common"
+import { TaskFavoriteRequest } from "../../../shared/proto/task"
 
 export async function toggleTaskFavorite(controller: Controller, request: TaskFavoriteRequest): Promise<Empty> {
 	if (!request.taskId || request.isFavorited === undefined) {
 		const errorMsg = `[toggleTaskFavorite] Invalid request: taskId or isFavorited missing`
 		console.error(errorMsg)
-		return {}
+		return Empty.create({})
 	}
 
 	try {
@@ -47,5 +47,5 @@ export async function toggleTaskFavorite(controller: Controller, request: TaskFa
 		console.error("Error in toggleTaskFavorite:", error)
 	}
 
-	return {}
+	return Empty.create({})
 }

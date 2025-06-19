@@ -5,6 +5,13 @@ export interface TerminalInfo {
 	busy: boolean
 	lastCommand: string
 	id: number
+	shellPath?: string
+	lastActive: number
+	pendingCwdChange?: string
+	cwdResolved?: {
+		resolve: () => void
+		reject: (error: Error) => void
+	}
 }
 
 // Although vscode.window.terminals provides a list of all open terminals, there's no way to know whether they're busy or not (exitStatus does not provide useful information for most commands). In order to prevent creating too many terminals, we need to keep track of terminals through the life of the extension, as well as session specific terminals for the life of a task (to get latest unretrieved output).
@@ -13,17 +20,26 @@ export class TerminalRegistry {
 	private static terminals: TerminalInfo[] = []
 	private static nextTerminalId = 1
 
-	static createTerminal(cwd?: string | vscode.Uri | undefined): TerminalInfo {
-		const terminal = vscode.window.createTerminal({
+	static createTerminal(cwd?: string | vscode.Uri | undefined, shellPath?: string): TerminalInfo {
+		const terminalOptions: vscode.TerminalOptions = {
 			cwd,
 			name: "Cline",
 			iconPath: new vscode.ThemeIcon("robot"),
-		})
+		}
+
+		// If a specific shell path is provided, use it
+		if (shellPath) {
+			terminalOptions.shellPath = shellPath
+		}
+
+		const terminal = vscode.window.createTerminal(terminalOptions)
 		const newInfo: TerminalInfo = {
 			terminal,
 			busy: false,
 			lastCommand: "",
 			id: this.nextTerminalId++,
+			shellPath,
+			lastActive: Date.now(),
 		}
 		this.terminals.push(newInfo)
 		return newInfo

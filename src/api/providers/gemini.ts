@@ -1,12 +1,14 @@
 import type { Anthropic } from "@anthropic-ai/sdk"
 // Restore GenerateContentConfig import and add GenerateContentResponseUsageMetadata
-import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
 import { GoogleGenAI, type GenerateContentConfig, type GenerateContentResponseUsageMetadata } from "@google/genai"
-import { ApiHandlerOptions, geminiDefaultModelId, GeminiModelId, geminiModels, ModelInfo } from "@shared/api"
-import { ApiHandler } from "../"
 import { withRetry } from "../retry"
+import { Part } from "@google/genai"
+import { ApiHandler } from "../"
+import { ApiHandlerOptions, geminiDefaultModelId, GeminiModelId, geminiModels, ModelInfo } from "@shared/api"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import { ApiStream } from "../transform/stream"
+import { telemetryService } from "@services/posthog/telemetry/TelemetryService"
+import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
 
 // Define a default TTL for the cache (e.g., 15 minutes in seconds)
 const DEFAULT_CACHE_TTL_SECONDS = 900
@@ -73,9 +75,13 @@ export class GeminiHandler implements ApiHandler {
 	 * @param messages The conversation history to include in the message
 	 * @returns An async generator that yields chunks of the response with accurate immediate costs
 	 */
-	@withRetry()
+	@withRetry({
+		maxRetries: 4,
+		baseDelay: 2000,
+		maxDelay: 15000,
+	})
 	async *createMessage(systemPrompt: string, messages: Anthropic.Messages.MessageParam[]): ApiStream {
-		const { id: model, info } = this.getModel()
+		const { id: modelId, info } = this.getModel()
 		const contents = messages.map(convertAnthropicMessageToGemini)
 
 		// Configure thinking budget if supported
@@ -92,80 +98,181 @@ export class GeminiHandler implements ApiHandler {
 		}
 
 		// Add thinking config if the model supports it
-		if (info.thinkingConfig?.outputPrice !== undefined && maxBudget > 0) {
+		if (thinkingBudget > 0) {
 			requestConfig.thinkingConfig = {
 				thinkingBudget: thinkingBudget,
+				includeThoughts: true,
 			}
 		}
 
 		// Generate content using the configured parameters
-		const result = await this.client.models.generateContentStream({
-			model,
-			contents: contents,
-			config: {
-				...requestConfig,
-			},
-		})
-		let accumulatedText: string = ""
-
-		// Track usage metadata
+		const sdkCallStartTime = Date.now()
+		let sdkFirstChunkTime: number | undefined
+		let ttftSdkMs: number | undefined
+		let apiSuccess = false
+		let apiError: string | undefined
+		let promptTokens = 0
+		let outputTokens = 0
+		let cacheReadTokens = 0
+		let thoughtsTokenCount = 0 // Initialize thought token counts
 		let lastUsageMetadata: GenerateContentResponseUsageMetadata | undefined
-
-		// Process the stream
-		for await (const chunk of result) {
-			if (chunk.text) {
-				accumulatedText += chunk.text
-				yield {
-					type: "text",
-					text: chunk.text,
-				}
-			}
-
-			if (chunk.usageMetadata) {
-				lastUsageMetadata = chunk.usageMetadata
-			}
-		}
-
-		// Yield usage information at the end
-		if (lastUsageMetadata) {
-			const inputTokens = lastUsageMetadata.promptTokenCount ?? 0
-			const outputTokens = lastUsageMetadata.candidatesTokenCount ?? 0
-			const cacheReadTokens = lastUsageMetadata.cachedContentTokenCount
-
-			// Calculate immediate costs
-			const totalCost = this.calculateCost({
-				info,
-				inputTokens,
-				outputTokens,
-				cacheReadTokens,
+		let accumulatedText = ""
+		try {
+			const result = await this.client.models.generateContentStream({
+				model: modelId,
+				contents: contents,
+				config: {
+					...requestConfig,
+				},
 			})
 
-			yield {
-				type: "usage",
-				inputTokens,
-				outputTokens,
-				cacheReadTokens,
-				cacheWriteTokens: 0,
-				totalCost,
+			let isFirstSdkChunk = true
+			for await (const chunk of result) {
+				if (isFirstSdkChunk) {
+					sdkFirstChunkTime = Date.now()
+					ttftSdkMs = sdkFirstChunkTime - sdkCallStartTime
+					isFirstSdkChunk = false
+				}
+
+				// Handle thinking content from Gemini's response
+				const candidateForThoughts = chunk?.candidates?.[0]
+				const partsForThoughts = candidateForThoughts?.content?.parts
+				let thoughts = "" // Initialize as empty string
+
+				if (partsForThoughts) {
+					// This ensures partsForThoughts is a Part[] array
+					for (const part of partsForThoughts) {
+						const { thought, text } = part as Part
+						if (thought && text) {
+							// Ensure part.text exists
+							// Handle the thought part
+							thoughts += text + "\n" // Append thought and a newline
+						}
+					}
+				}
+
+				if (thoughts.trim() !== "") {
+					yield {
+						type: "reasoning",
+						reasoning: thoughts.trim(),
+					}
+					thoughts = "" // Reset thoughts after yielding
+				}
+
+				if (chunk.text) {
+					accumulatedText += chunk.text
+					yield {
+						type: "text",
+						text: chunk.text,
+					}
+				}
+
+				if (chunk.usageMetadata) {
+					lastUsageMetadata = chunk.usageMetadata
+					promptTokens = lastUsageMetadata.promptTokenCount ?? promptTokens
+					outputTokens = lastUsageMetadata.candidatesTokenCount ?? outputTokens
+					thoughtsTokenCount = lastUsageMetadata.thoughtsTokenCount ?? thoughtsTokenCount
+					cacheReadTokens = lastUsageMetadata.cachedContentTokenCount ?? cacheReadTokens
+				}
+			}
+			apiSuccess = true
+
+			if (lastUsageMetadata) {
+				const totalCost = this.calculateCost({
+					info,
+					inputTokens: promptTokens,
+					outputTokens,
+					thoughtsTokenCount,
+					cacheReadTokens,
+				})
+				yield {
+					type: "usage",
+					inputTokens: promptTokens - cacheReadTokens,
+					outputTokens,
+					thoughtsTokenCount,
+					cacheReadTokens,
+					cacheWriteTokens: 0,
+					totalCost,
+				}
+				//#region MSLogging
+				const logMessage: LogMessageRequest = {
+					request: contents.map((msg) => JSON.stringify(msg)).join("\n"),
+					response: accumulatedText,
+					inputTokenCount: lastUsageMetadata?.promptTokenCount ?? 0,
+					outputTokenCount: lastUsageMetadata?.candidatesTokenCount ?? 0,
+					modelName: modelId,
+					vendorName: "gemini",
+					modelId: modelId,
+					modelFamily: modelId,
+					modelVersion: "",
+					taskId: this.options.taskId,
+					maxInputTokens: info.maxTokens,
+				}
+				const msLogger = await MsLogger.getInstance()
+				msLogger.saveLog(logMessage)
+				//#endregion MSLogging
+			}
+		} catch (error) {
+			apiSuccess = false
+			// Let the error propagate to be handled by withRetry or Task.ts
+			// Telemetry will be sent in the finally block.
+			if (error instanceof Error) {
+				apiError = error.message
+
+				// Gemini doesn't include status codes in their errors
+				// https://github.com/googleapis/js-genai/blob/61f7f27b866c74333ca6331883882489bcb708b9/src/_api_client.ts#L569
+				const rateLimitPatterns = [
+					/got status: 429/i,
+					/429 Too Many Requests/i,
+					/rate limit exceeded/i,
+					/too many requests/i,
+				]
+
+				const isRateLimit =
+					error.name === "ClientError" && rateLimitPatterns.some((pattern) => pattern.test(error.message))
+
+				if (isRateLimit) {
+					const rateLimitError = Object.assign(new Error(error.message), {
+						...error,
+						status: 429,
+					})
+					throw rateLimitError
+				}
+			} else {
+				apiError = String(error)
+			}
+
+			throw error
+		} finally {
+			const sdkCallEndTime = Date.now()
+			const totalDurationSdkMs = sdkCallEndTime - sdkCallStartTime
+			const cacheHit = cacheReadTokens > 0
+			const cacheHitPercentage = promptTokens > 0 ? (cacheReadTokens / promptTokens) * 100 : undefined
+			const throughputTokensPerSecSdk =
+				totalDurationSdkMs > 0 && outputTokens > 0 ? outputTokens / (totalDurationSdkMs / 1000) : undefined
+
+			if (this.options.taskId) {
+				telemetryService.captureGeminiApiPerformance(
+					this.options.taskId,
+					modelId,
+					{
+						ttftSec: ttftSdkMs !== undefined ? ttftSdkMs / 1000 : undefined,
+						totalDurationSec: totalDurationSdkMs / 1000,
+						promptTokens,
+						outputTokens,
+						cacheReadTokens,
+						cacheHit,
+						cacheHitPercentage,
+						apiSuccess,
+						apiError,
+						throughputTokensPerSec: throughputTokensPerSecSdk,
+					},
+					true,
+				)
+			} else {
+				console.warn("GeminiHandler: taskId not available for telemetry in createMessage.")
 			}
 		}
-		//#region MSLogging
-		const logMessage: LogMessageRequest = {
-			request: contents.map((msg) => JSON.stringify(msg)).join("\n"),
-			response: accumulatedText,
-			inputTokenCount: lastUsageMetadata?.promptTokenCount ?? 0,
-			outputTokenCount: lastUsageMetadata?.candidatesTokenCount ?? 0,
-			modelName: model,
-			vendorName: "gemini",
-			modelId: model,
-			modelFamily: model,
-			modelVersion: "",
-			taskId: this.options.taskId,
-			maxInputTokens: info.maxTokens,
-		}
-		const msLogger = await MsLogger.getInstance()
-		msLogger.saveLog(logMessage)
-		//#endregion MSLogging
 	}
 
 	/**
@@ -182,11 +289,13 @@ export class GeminiHandler implements ApiHandler {
 		info,
 		inputTokens,
 		outputTokens,
+		thoughtsTokenCount = 0,
 		cacheReadTokens = 0,
 	}: {
 		info: ModelInfo
 		inputTokens: number
 		outputTokens: number
+		thoughtsTokenCount: number
 		cacheReadTokens?: number
 	}) {
 		// Exit early if any required pricing information is missing
@@ -218,18 +327,18 @@ export class GeminiHandler implements ApiHandler {
 		const inputTokensCost = inputPrice * (uncachedInputTokens / 1_000_000)
 
 		// 2. Output token costs
-		const outputTokensCost = outputPrice * (outputTokens / 1_000_000)
+		const responseTokensCost = outputPrice * ((outputTokens + thoughtsTokenCount) / 1_000_000)
 
 		// 3. Cache read costs (immediate)
 		const cacheReadCost = (cacheReadTokens ?? 0) > 0 ? cacheReadsPrice * ((cacheReadTokens ?? 0) / 1_000_000) : 0
 
 		// Calculate total immediate cost (excluding cache write/storage costs)
-		const totalCost = inputTokensCost + outputTokensCost + cacheReadCost
+		const totalCost = inputTokensCost + responseTokensCost + cacheReadCost
 
 		// Create the trace object for debugging
 		const trace: Record<string, { price: number; tokens: number; cost: number }> = {
 			input: { price: inputPrice, tokens: uncachedInputTokens, cost: inputTokensCost },
-			output: { price: outputPrice, tokens: outputTokens, cost: outputTokensCost },
+			output: { price: outputPrice, tokens: outputTokens, cost: responseTokensCost },
 		}
 
 		// Only include cache read costs in the trace (cache write costs are tracked separately)
