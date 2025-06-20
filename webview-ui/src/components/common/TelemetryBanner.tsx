@@ -57,10 +57,6 @@ const TelemetryBanner = () => {
 		vscode.postMessage({ type: "telemetrySetting", telemetrySetting: "enabled" satisfies TelemetrySetting })
 	}
 
-	const handleClose = () => {
-		vscode.postMessage({ type: "telemetrySetting", telemetrySetting: "enabled" satisfies TelemetrySetting })
-	}
-
 	return (
 		<BannerContainer>
 			<CloseButton onClick={handleClose} aria-label="Close banner and enable telemetry">

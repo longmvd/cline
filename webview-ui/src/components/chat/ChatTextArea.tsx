@@ -17,15 +17,6 @@ import {
 	SearchResult,
 	shouldShowContextMenu,
 } from "@/utils/context-mentions"
-import {
-	SlashCommand,
-	slashCommandDeleteRegex,
-	shouldShowSlashCommandsMenu,
-	getMatchingSlashCommands,
-	insertSlashCommand,
-	removeSlashCommand,
-	validateSlashCommand,
-} from "@/utils/slash-commands"
 import { useMetaKeyDetection, useShortcut } from "@/utils/hooks"
 import {
 	getMatchingSlashCommands,
@@ -53,25 +44,6 @@ import { useClickAway, useEvent, useWindowSize } from "react-use"
 import styled from "styled-components"
 import ClineRulesToggleModal from "../cline-rules/ClineRulesToggleModal"
 import ServersToggleModal from "./ServersToggleModal"
-import ClineRulesToggleModal from "../cline-rules/ClineRulesToggleModal"
-
-const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: number }> => {
-	return new Promise((resolve, reject) => {
-		const img = new Image()
-		img.onload = () => {
-			if (img.naturalWidth > 7500 || img.naturalHeight > 7500) {
-				reject(new Error("Image dimensions exceed maximum allowed size of 7500px."))
-			} else {
-				resolve({ width: img.naturalWidth, height: img.naturalHeight })
-			}
-		}
-		img.onerror = (err) => {
-			console.error("Failed to load image for dimension check:", err)
-			reject(new Error("Failed to load image to check dimensions."))
-		}
-		img.src = dataUrl
-	})
-}
 
 const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: number }> => {
 	return new Promise((resolve, reject) => {

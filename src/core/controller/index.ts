@@ -206,6 +206,7 @@ export class Controller {
 				await this.setUserInfo(message.user || undefined)
 				await this.postStateToWebview()
 				break
+
 			case "fetchUserCreditsData": {
 				await this.fetchUserCreditsData()
 				break
@@ -253,7 +254,6 @@ export class Controller {
 				if (message.grpc_request_cancel) {
 					await handleGrpcRequestCancel(this, message.grpc_request_cancel)
 				}
-				this.postMessageToWebview({ type: "relinquishControl" })
 				break
 			}
 
@@ -320,19 +320,6 @@ export class Controller {
 						apiConfiguration.awsBedrockCustomSelected,
 					)
 					await updateWorkspaceState(
-						this.context,
-						"previousModeAwsBedrockCustomModelBaseId",
-						apiConfiguration.awsBedrockCustomModelBaseId,
-					)
-					break
-				case "bedrock":
-					await updateGlobalState(this.context, "previousModeModelId", apiConfiguration.apiModelId)
-					await updateGlobalState(
-						this.context,
-						"previousModeAwsBedrockCustomSelected",
-						apiConfiguration.awsBedrockCustomSelected,
-					)
-					await updateGlobalState(
 						this.context,
 						"previousModeAwsBedrockCustomModelBaseId",
 						apiConfiguration.awsBedrockCustomModelBaseId,
@@ -414,11 +401,6 @@ export class Controller {
 						await updateWorkspaceState(this.context, "apiModelId", newModelId)
 						await updateWorkspaceState(this.context, "awsBedrockCustomSelected", newAwsBedrockCustomSelected)
 						await updateWorkspaceState(this.context, "awsBedrockCustomModelBaseId", newAwsBedrockCustomModelBaseId)
-						break
-					case "bedrock":
-						await updateGlobalState(this.context, "apiModelId", newModelId)
-						await updateGlobalState(this.context, "awsBedrockCustomSelected", newAwsBedrockCustomSelected)
-						await updateGlobalState(this.context, "awsBedrockCustomModelBaseId", newAwsBedrockCustomModelBaseId)
 						break
 					case "openrouter":
 					case "cline":

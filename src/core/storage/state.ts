@@ -188,8 +188,6 @@ export async function getAllExtensionState(context: vscode.ExtensionContext) {
 		awsBedrockEndpoint,
 		awsProfile,
 		awsUseProfile,
-		awsBedrockCustomSelected,
-		awsBedrockCustomModelBaseId,
 		vertexProjectId,
 		vertexRegion,
 		openAiBaseUrl,
@@ -263,8 +261,6 @@ export async function getAllExtensionState(context: vscode.ExtensionContext) {
 		getGlobalState(context, "awsBedrockEndpoint") as Promise<string | undefined>,
 		getGlobalState(context, "awsProfile") as Promise<string | undefined>,
 		getGlobalState(context, "awsUseProfile") as Promise<boolean | undefined>,
-		getGlobalState(context, "awsBedrockCustomSelected") as Promise<boolean | undefined>,
-		getGlobalState(context, "awsBedrockCustomModelBaseId") as Promise<BedrockModelId | undefined>,
 		getGlobalState(context, "vertexProjectId") as Promise<string | undefined>,
 		getGlobalState(context, "vertexRegion") as Promise<string | undefined>,
 		getGlobalState(context, "openAiBaseUrl") as Promise<string | undefined>,
@@ -655,8 +651,6 @@ export async function updateApiConfiguration(context: vscode.ExtensionContext, a
 	await updateGlobalState(context, "awsBedrockEndpoint", awsBedrockEndpoint)
 	await updateGlobalState(context, "awsProfile", awsProfile)
 	await updateGlobalState(context, "awsUseProfile", awsUseProfile)
-	await updateGlobalState(context, "awsBedrockCustomSelected", awsBedrockCustomSelected)
-	await updateGlobalState(context, "awsBedrockCustomModelBaseId", awsBedrockCustomModelBaseId)
 	await updateGlobalState(context, "vertexProjectId", vertexProjectId)
 	await updateGlobalState(context, "vertexRegion", vertexRegion)
 	await updateGlobalState(context, "openAiBaseUrl", openAiBaseUrl)
@@ -693,7 +687,6 @@ export async function updateApiConfiguration(context: vscode.ExtensionContext, a
 	await storeSecret(context, "awsSessionToken", awsSessionToken)
 	await storeSecret(context, "openAiApiKey", openAiApiKey)
 	await storeSecret(context, "geminiApiKey", geminiApiKey)
-	await updateGlobalState(context, "geminiBaseUrl", geminiBaseUrl)
 	await storeSecret(context, "openAiNativeApiKey", openAiNativeApiKey)
 	await storeSecret(context, "deepSeekApiKey", deepSeekApiKey)
 	await storeSecret(context, "requestyApiKey", requestyApiKey)
