@@ -9,12 +9,10 @@ import { UserInfo } from "./UserInfo"
 export interface WebviewMessage {
 	type:
 		| "requestVsCodeLmModels"
-		| "authStateChanged"
 		| "fetchMcpMarketplace"
 		| "searchCommits"
 		| "telemetrySetting"
 		| "clearAllTaskHistory"
-		| "fetchUserCreditsData"
 		| "grpc_request"
 		| "grpc_request_cancel"
 
