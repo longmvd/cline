@@ -41,6 +41,45 @@ export function planActModeToJSON(object: PlanActMode): string {
   }
 }
 
+export enum TelemetrySettingEnum {
+  UNSET = 0,
+  ENABLED = 1,
+  DISABLED = 2,
+  UNRECOGNIZED = -1,
+}
+
+export function telemetrySettingEnumFromJSON(object: any): TelemetrySettingEnum {
+  switch (object) {
+    case 0:
+    case "UNSET":
+      return TelemetrySettingEnum.UNSET;
+    case 1:
+    case "ENABLED":
+      return TelemetrySettingEnum.ENABLED;
+    case 2:
+    case "DISABLED":
+      return TelemetrySettingEnum.DISABLED;
+    case -1:
+    case "UNRECOGNIZED":
+    default:
+      return TelemetrySettingEnum.UNRECOGNIZED;
+  }
+}
+
+export function telemetrySettingEnumToJSON(object: TelemetrySettingEnum): string {
+  switch (object) {
+    case TelemetrySettingEnum.UNSET:
+      return "UNSET";
+    case TelemetrySettingEnum.ENABLED:
+      return "ENABLED";
+    case TelemetrySettingEnum.DISABLED:
+      return "DISABLED";
+    case TelemetrySettingEnum.UNRECOGNIZED:
+    default:
+      return "UNRECOGNIZED";
+  }
+}
+
 export interface State {
   stateJson: string;
 }
@@ -104,6 +143,11 @@ export interface AutoApprovalSettingsRequest_Actions {
   executeAllCommands: boolean;
   useBrowser: boolean;
   useMcp: boolean;
+}
+
+export interface TelemetrySettingRequest {
+  metadata?: Metadata | undefined;
+  setting: TelemetrySettingEnum;
 }
 
 /** Message for updating settings */
@@ -1294,6 +1338,84 @@ export const AutoApprovalSettingsRequest_Actions: MessageFns<AutoApprovalSetting
     message.executeAllCommands = object.executeAllCommands ?? false;
     message.useBrowser = object.useBrowser ?? false;
     message.useMcp = object.useMcp ?? false;
+    return message;
+  },
+};
+
+function createBaseTelemetrySettingRequest(): TelemetrySettingRequest {
+  return { metadata: undefined, setting: 0 };
+}
+
+export const TelemetrySettingRequest: MessageFns<TelemetrySettingRequest> = {
+  encode(message: TelemetrySettingRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.metadata !== undefined) {
+      Metadata.encode(message.metadata, writer.uint32(10).fork()).join();
+    }
+    if (message.setting !== 0) {
+      writer.uint32(16).int32(message.setting);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): TelemetrySettingRequest {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseTelemetrySettingRequest();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.metadata = Metadata.decode(reader, reader.uint32());
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.setting = reader.int32() as any;
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): TelemetrySettingRequest {
+    return {
+      metadata: isSet(object.metadata) ? Metadata.fromJSON(object.metadata) : undefined,
+      setting: isSet(object.setting) ? telemetrySettingEnumFromJSON(object.setting) : 0,
+    };
+  },
+
+  toJSON(message: TelemetrySettingRequest): unknown {
+    const obj: any = {};
+    if (message.metadata !== undefined) {
+      obj.metadata = Metadata.toJSON(message.metadata);
+    }
+    if (message.setting !== 0) {
+      obj.setting = telemetrySettingEnumToJSON(message.setting);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<TelemetrySettingRequest>, I>>(base?: I): TelemetrySettingRequest {
+    return TelemetrySettingRequest.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<TelemetrySettingRequest>, I>>(object: I): TelemetrySettingRequest {
+    const message = createBaseTelemetrySettingRequest();
+    message.metadata = (object.metadata !== undefined && object.metadata !== null)
+      ? Metadata.fromPartial(object.metadata)
+      : undefined;
+    message.setting = object.setting ?? 0;
     return message;
   },
 };
@@ -3039,6 +3161,14 @@ export const StateServiceDefinition = {
     updateSettings: {
       name: "updateSettings",
       requestType: UpdateSettingsRequest,
+      requestStream: false,
+      responseType: Empty,
+      responseStream: false,
+      options: {},
+    },
+    updateTelemetrySetting: {
+      name: "updateTelemetrySetting",
+      requestType: TelemetrySettingRequest,
       requestStream: false,
       responseType: Empty,
       responseStream: false,

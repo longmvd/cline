@@ -1876,15 +1876,6 @@ export const FileServiceDefinition = {
       responseStream: false,
       options: {},
     },
-    /** Select images from the file system and return as data URLs */
-    selectImages: {
-      name: "selectImages",
-      requestType: EmptyRequest,
-      requestStream: false,
-      responseType: StringArray,
-      responseStream: false,
-      options: {},
-    },
     /** Select images and other files from the file system and returns as data URLs & paths respectively */
     selectFiles: {
       name: "selectFiles",

@@ -49,10 +49,20 @@ export interface MsUserInfo {
 	ipAddress: string
 	extensionVersion: string
 }
-export type RegisterUserInfoParams = {
-	onError?: (message: string, data: any) => void
+
+export interface ExtensionConfig {
+	InActive: boolean
+	Version: string
+	InstallPath: string
+	ExtraConfig: {
+		[key: string]: any
+	}
 }
-export async function registerUserInfo({ onError }: RegisterUserInfoParams = {}): Promise<MsUserInfo> {
+
+export type RegisterUserInfoParams = {
+	onNeedToUpdate?: (params: { message: string; extensionConfig: ExtensionConfig }) => void
+}
+export async function registerUserInfo({ onNeedToUpdate }: RegisterUserInfoParams = {}): Promise<MsUserInfo> {
 	if (userInfo.userId) {
 		return userInfo as MsUserInfo
 	} else {
@@ -76,13 +86,17 @@ export async function registerUserInfo({ onError }: RegisterUserInfoParams = {})
 				// 	Data: {
 				// 		UserId: res.data?.UserId, // Assuming the API returns the user ID in the response
 				// 	},
+				// 	Metadata:{
+				// 		InstallPath: "\\\\mdlong-vdi\\Shared\\Cline"
+				// 	}
 				// }
 				const isSuccess = res.data?.IsSuccess
 				const message = res.data?.Message
 				const userInfoResponse = res.data?.Data as any
+				const extensionConfig = res.data?.Metadata as ExtensionConfig
 				if (!isSuccess && userInfoResponse?.UserId) {
 					// tránh lỗi version cũ && userInfoResponse?.userId
-					onError?.(message, userInfo)
+					onNeedToUpdate?.({ message, extensionConfig })
 					return userInfo
 				}
 				userInfo.userId = userInfoResponse?.UserId ?? res.data?.UserId // Assuming the API returns the user ID in the response

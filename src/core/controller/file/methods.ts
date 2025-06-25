@@ -15,7 +15,6 @@ import { refreshRules } from "./refreshRules"
 import { searchCommits } from "./searchCommits"
 import { searchFiles } from "./searchFiles"
 import { selectFiles } from "./selectFiles"
-import { selectImages } from "./selectImages"
 import { subscribeToWorkspaceUpdates } from "./subscribeToWorkspaceUpdates"
 import { toggleClineRule } from "./toggleClineRule"
 import { toggleCursorRule } from "./toggleCursorRule"
@@ -42,7 +41,6 @@ export function registerAllMethods(): void {
 	registerMethod("searchCommits", searchCommits)
 	registerMethod("searchFiles", searchFiles)
 	registerMethod("selectFiles", selectFiles)
-	registerMethod("selectImages", selectImages)
 	registerMethod("subscribeToWorkspaceUpdates", subscribeToWorkspaceUpdates, { isStreaming: true })
 	registerMethod("toggleClineRule", toggleClineRule)
 	registerMethod("toggleCursorRule", toggleCursorRule)

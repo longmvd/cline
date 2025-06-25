@@ -12,6 +12,7 @@ import { togglePlanActMode } from "./togglePlanActMode"
 import { updateAutoApprovalSettings } from "./updateAutoApprovalSettings"
 import { updateDefaultTerminalProfile } from "./updateDefaultTerminalProfile"
 import { updateSettings } from "./updateSettings"
+import { updateTelemetrySetting } from "./updateTelemetrySetting"
 import { updateTerminalConnectionTimeout } from "./updateTerminalConnectionTimeout"
 import { updateTerminalReuseEnabled } from "./updateTerminalReuseEnabled"
 
@@ -32,6 +33,7 @@ export function registerAllMethods(): void {
 	registerMethod("updateAutoApprovalSettings", updateAutoApprovalSettings)
 	registerMethod("updateDefaultTerminalProfile", updateDefaultTerminalProfile)
 	registerMethod("updateSettings", updateSettings)
+	registerMethod("updateTelemetrySetting", updateTelemetrySetting)
 	registerMethod("updateTerminalConnectionTimeout", updateTerminalConnectionTimeout)
 	registerMethod("updateTerminalReuseEnabled", updateTerminalReuseEnabled)
 }

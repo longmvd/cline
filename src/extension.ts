@@ -25,7 +25,11 @@ import { WebviewProviderType as WebviewProviderTypeEnum } from "@shared/proto/ui
 import { WebviewProviderType } from "./shared/webview/types"
 import { sendHistoryButtonClickedEvent } from "./core/controller/ui/subscribeToHistoryButtonClicked"
 import { sendAccountButtonClickedEvent } from "./core/controller/ui/subscribeToAccountButtonClicked"
-import { migratePlanActGlobalToWorkspaceStorage, migrateCustomInstructionsToGlobalRules } from "./core/storage/state"
+import {
+	migratePlanActGlobalToWorkspaceStorage,
+	migrateCustomInstructionsToGlobalRules,
+	cleanupModeFromWorkspaceStorage,
+} from "./core/storage/state"
 
 import { sendFocusChatInputEvent } from "./core/controller/ui/subscribeToFocusChatInput"
 import { FileContextTracker } from "./core/context/context-tracking/FileContextTracker"
@@ -33,6 +37,7 @@ import * as hostProviders from "@hosts/host-providers"
 import { vscodeHostBridgeClient } from "@/hosts/vscode/client/host-grpc-client"
 import { VscodeWebviewProvider } from "./core/webview/VscodeWebviewProvider"
 import { ExtensionContext } from "vscode"
+import { openNetworkPath } from "./utils/file-handler.utils"
 
 /*
 Built using https://github.com/microsoft/vscode-webview-ui-toolkit
@@ -54,30 +59,26 @@ export async function activate(context: vscode.ExtensionContext) {
 	ErrorService.initialize()
 	Logger.initialize(outputChannel)
 	let errorMessage = "Lỗi đăng ký user, vui lòng liên hệ TeamAI hoặc GĐTC."
+	let installPath = ""
+	let isOldVersion = false
 	const userInfo = await registerUserInfo({
-		onError: (message, _) => {
+		onNeedToUpdate: ({ message, extensionConfig }) => {
+			isOldVersion = true
 			errorMessage = message
+			installPath = extensionConfig.InstallPath ?? "\\mdlong-vdi/Shared/Cline"
 		},
 	})
-	let link = "\\mdlong-vdi/Shared/Cline"
 	if (!userInfo.userId) {
-		vscode.window.showErrorMessage(errorMessage, { modal: true }, "Copy link").then((selection) => {
+		const buttons = isOldVersion ? ["Copy link", "Open link"] : ["OK"]
+		vscode.window.showErrorMessage(errorMessage, { modal: true }, ...buttons).then(async (selection) => {
 			if (selection === "Copy link") {
 				// Copy link to clipboard
-				vscode.env.clipboard.writeText(link).then(() => {
+				vscode.env.clipboard.writeText(installPath).then(() => {
 					vscode.window.showInformationMessage("Link copied to clipboard!")
 				})
 			} else if (selection === "Open link") {
-				// Open link - for network paths, use file:// protocol
-				const uri = vscode.Uri.file(link)
-				vscode.env.openExternal(uri).then(
-					() => {
-						vscode.window.showInformationMessage("Link opened successfully!")
-					},
-					(error) => {
-						vscode.window.showErrorMessage(`Failed to open link: ${error.message}`)
-					},
-				)
+				// Open network path with improved handling
+				await openNetworkPath(installPath)
 			}
 		})
 		return
@@ -91,6 +92,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Migrate custom instructions to global Cline rules (one-time cleanup)
 	await migrateCustomInstructionsToGlobalRules(context)
+
+	// Clean up mode from workspace storage (one-time cleanup)
+	await cleanupModeFromWorkspaceStorage(context)
 
 	// Clean up orphaned file context warnings (startup cleanup)
 	await FileContextTracker.cleanupOrphanedWarnings(context)
