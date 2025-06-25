@@ -53,9 +53,33 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	ErrorService.initialize()
 	Logger.initialize(outputChannel)
-	const userInfo = await registerUserInfo()
+	let errorMessage = "Lỗi đăng ký user, vui lòng liên hệ TeamAI hoặc GĐTC."
+	const userInfo = await registerUserInfo({
+		onError: (message, _) => {
+			errorMessage = message
+		},
+	})
+	let link = "\\mdlong-vdi/Shared/Cline"
 	if (!userInfo.userId) {
-		vscode.window.showErrorMessage("Lỗi đăng ký user, vui lòng liên hệ TeamAI hoặc GĐTC.", { modal: true }, "OK")
+		vscode.window.showErrorMessage(errorMessage, { modal: true }, "Copy link").then((selection) => {
+			if (selection === "Copy link") {
+				// Copy link to clipboard
+				vscode.env.clipboard.writeText(link).then(() => {
+					vscode.window.showInformationMessage("Link copied to clipboard!")
+				})
+			} else if (selection === "Open link") {
+				// Open link - for network paths, use file:// protocol
+				const uri = vscode.Uri.file(link)
+				vscode.env.openExternal(uri).then(
+					() => {
+						vscode.window.showInformationMessage("Link opened successfully!")
+					},
+					(error) => {
+						vscode.window.showErrorMessage(`Failed to open link: ${error.message}`)
+					},
+				)
+			}
+		})
 		return
 	}
 	Logger.log("Cline extension activated")

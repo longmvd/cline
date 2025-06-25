@@ -8,6 +8,7 @@ import * as vscode from "vscode"
 import { withProxy } from "../../utils/proxy"
 import { getUserInfo, MsUserInfo } from "./../../utils/user-info.utils"
 import { Logger } from "./Logger"
+import { Message } from "ollama"
 
 export interface LogMessage {
 	id: number
@@ -28,9 +29,23 @@ export interface LogMessage {
 	mode?: string //plan or act
 	logDate?: Date
 	logTraceId?: string
+	userPrompt?: string // Optional field for prompt
+	messageType?: MessageType
+}
+
+export enum MessageType {
+	User = 1,
+	System = 2,
 }
 
 export type LogMessageRequest = Omit<LogMessage, "id" | "createdDate" | "userId">
+export interface MessageRequest {
+	role: "user" | "assistant" | "system"
+	content: {
+		type: "text" | string
+		text: string
+	}[]
+}
 
 interface MsLoggerConfig {
 	logApiUrl: string
@@ -175,6 +190,7 @@ export class MsLogger {
 		// await this.saveLogToSqlite(message)
 		// Save to JSON file
 		// await this.saveLogToJson(message)
+		this.processMessage(message)
 		await this.saveLogToServer(message)
 	}
 
@@ -848,5 +864,52 @@ export class MsLogger {
 			instance.closeDatabase()
 		})
 		Logger.log("MsLogger deactivated")
+	}
+
+	processMessage(message: LogMessageRequest): void {
+		try {
+			const request = JSON.parse(message.request) as MessageRequest
+			if (request.role === "user") {
+				const userPrompt = request.content.find(
+					(content) =>
+						content.type === "text" && (content.text.includes("<user_message>") || content.text.includes("<task>")),
+				)
+				if (userPrompt) {
+					// Regex to extract user message and task in tag <user_message> </user_message> and <task> </task>
+					const userMessageMatch = userPrompt.text.match(/<user_message>(.*?)<\/user_message>/s)
+					const taskMatch = userPrompt.text.match(/<task>(.*?)<\/task>/s)
+					const feedbackMatch = userPrompt.text.match(/<feedback>(.*?)<\/feedback>/s)
+
+					let extractedContent = ""
+
+					if (userMessageMatch) {
+						extractedContent += userMessageMatch[1].trim()
+					}
+
+					if (taskMatch) {
+						if (extractedContent) {
+							extractedContent += " | " // Separator if both exist
+						}
+						extractedContent += taskMatch[1].trim()
+					}
+
+					if (feedbackMatch) {
+						if (extractedContent) {
+							extractedContent += " | " // Separator if both exist
+						}
+						extractedContent += feedbackMatch[1].trim()
+					}
+
+					if (extractedContent) {
+						message.userPrompt = extractedContent
+						message.messageType = MessageType.User
+					} else {
+						message.messageType = MessageType.System
+					}
+				}
+			}
+		} catch (error) {
+			Logger.log("Error processing message: " + JSON.stringify(error))
+		}
 	}
 }

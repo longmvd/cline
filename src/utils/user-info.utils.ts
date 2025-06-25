@@ -3,6 +3,8 @@ import * as os from "os"
 import * as vscode from "vscode"
 import { Logger } from "../services/logging/Logger"
 import { axiosWithProxy } from "./proxy"
+import * as pkg from "../../package.json"
+export const EXTENSION_VERSION = pkg.version
 
 let userInfo: MsUserInfo = {
 	userId: undefined,
@@ -47,8 +49,10 @@ export interface MsUserInfo {
 	ipAddress: string
 	extensionVersion: string
 }
-
-export async function registerUserInfo() {
+export type RegisterUserInfoParams = {
+	onError?: (message: string, data: any) => void
+}
+export async function registerUserInfo({ onError }: RegisterUserInfoParams = {}): Promise<MsUserInfo> {
 	if (userInfo.userId) {
 		return userInfo as MsUserInfo
 	} else {
@@ -61,12 +65,27 @@ export async function registerUserInfo() {
 			computerName: computerName, // Use the computer name
 			gitUsername: gitUsername, // Use the Git username
 			ipAddress: ipAddress,
-			extensionVersion: "3.17.14",
+			extensionVersion: EXTENSION_VERSION,
 		}
 		try {
 			const res = await axiosWithProxy.post("https://aiagentmonitor.misa.local/api/business/UserInfos/register", userInfo)
 			if (res.status === 200) {
-				userInfo.userId = res.data.UserId // Assuming the API returns the user ID in the response
+				// const data = {
+				// 	IsSuccess: false,
+				// 	Message: "Cập nhật bản mới đi",
+				// 	Data: {
+				// 		UserId: res.data?.UserId, // Assuming the API returns the user ID in the response
+				// 	},
+				// }
+				const isSuccess = res.data?.IsSuccess
+				const message = res.data?.Message
+				const userInfoResponse = res.data?.Data as any
+				if (!isSuccess && userInfoResponse?.UserId) {
+					// tránh lỗi version cũ && userInfoResponse?.userId
+					onError?.(message, userInfo)
+					return userInfo
+				}
+				userInfo.userId = userInfoResponse?.UserId ?? res.data?.UserId // Assuming the API returns the user ID in the response
 			}
 			Logger.log("User info registered successfully:" + JSON.stringify(userInfo))
 			return userInfo
