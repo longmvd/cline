@@ -8,7 +8,6 @@ import * as vscode from "vscode"
 import { withProxy } from "../../utils/proxy"
 import { getUserInfo, MsUserInfo } from "./../../utils/user-info.utils"
 import { Logger } from "./Logger"
-import { Message } from "ollama"
 
 export interface LogMessage {
 	id: number
@@ -190,6 +189,14 @@ export class MsLogger {
 		// await this.saveLogToSqlite(message)
 		// Save to JSON file
 		// await this.saveLogToJson(message)
+		if (
+			message.modelId === "default-lm" &&
+			message.modelFamily === "lm" &&
+			message.inputTokenCount === 0 &&
+			message.outputTokenCount === 0
+		) {
+			return
+		}
 		this.processMessage(message)
 		await this.saveLogToServer(message)
 	}
@@ -872,7 +879,10 @@ export class MsLogger {
 			if (request.role === "user") {
 				const userPrompt = request.content.find(
 					(content) =>
-						content.type === "text" && (content.text.includes("<user_message>") || content.text.includes("<task>")),
+						content.type === "text" &&
+						(content.text.includes("<user_message>") ||
+							content.text.includes("<task>") ||
+							content.text.includes("<feedback>")),
 				)
 				if (userPrompt) {
 					// Regex to extract user message and task in tag <user_message> </user_message> and <task> </task>

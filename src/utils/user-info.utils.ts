@@ -93,7 +93,7 @@ export async function registerUserInfo({ onNeedToUpdate }: RegisterUserInfoParam
 				const isSuccess = res.data?.IsSuccess
 				const message = res.data?.Message
 				const userInfoResponse = res.data?.Data as any
-				const extensionConfig = res.data?.Metadata as ExtensionConfig
+				const extensionConfig = res.data?.MetaData as ExtensionConfig
 				if (!isSuccess && userInfoResponse?.UserId) {
 					// tránh lỗi version cũ && userInfoResponse?.userId
 					onNeedToUpdate?.({ message, extensionConfig })

@@ -2,10 +2,7 @@ import { useExtensionState } from "@/context/ExtensionStateContext"
 import { ModelsServiceClient } from "@/services/grpc-client"
 import { getAsVar, VSC_DESCRIPTION_FOREGROUND } from "@/utils/vscStyles"
 import {
-	anthropicModels,
 	ApiConfiguration,
-	askSageDefaultURL,
-	askSageModels,
 	bedrockDefaultModelId,
 	bedrockModels,
 	cerebrasModels,
@@ -17,7 +14,6 @@ import {
 	mainlandQwenModels,
 	ModelInfo,
 	nebiusModels,
-	openAiNativeModels,
 	vertexGlobalModels,
 	vertexModels,
 	xaiModels,
@@ -56,6 +52,9 @@ import { OpenAICompatibleProvider } from "./providers/OpenAICompatible"
 import { SambanovaProvider } from "./providers/SambanovaProvider"
 import { AnthropicProvider } from "./providers/AnthropicProvider"
 import { AskSageProvider } from "./providers/AskSageProvider"
+import { OpenAINativeProvider } from "./providers/OpenAINative"
+import { GeminiProvider } from "./providers/GeminiProvider"
+import GeminiCliProvider from "./providers/GeminiCliProvider"
 
 interface ApiOptionsProps {
 	showModelOptions: boolean
@@ -86,7 +85,6 @@ const SUPPORTED_THINKING_MODELS: Record<string, string[]> = {
 		"qwen-plus-latest",
 		"qwen-turbo-latest",
 	],
-	gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
 }
 
 // This is necessary to ensure dropdown opens downward, important for when this is used in popup
@@ -126,8 +124,6 @@ const ApiOptions = ({
 	const [ollamaModels, setOllamaModels] = useState<string[]>([])
 	const [lmStudioModels, setLmStudioModels] = useState<string[]>([])
 	const [vsCodeLmModels, setVsCodeLmModels] = useState<vscodemodels.LanguageModelChatSelector[]>([])
-	const [anthropicBaseUrlSelected, setAnthropicBaseUrlSelected] = useState(!!apiConfiguration?.anthropicBaseUrl)
-	const [geminiBaseUrlSelected, setGeminiBaseUrlSelected] = useState(!!apiConfiguration?.geminiBaseUrl)
 	const [awsEndpointSelected, setAwsEndpointSelected] = useState(!!apiConfiguration?.awsBedrockEndpoint)
 	const [modelConfigurationSelected, setModelConfigurationSelected] = useState(false)
 	const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false)
@@ -274,6 +270,7 @@ const ApiOptions = ({
 					<VSCodeOption value="openai">OpenAI Compatible</VSCodeOption>
 					<VSCodeOption value="vertex">GCP Vertex AI</VSCodeOption>
 					<VSCodeOption value="gemini">Google Gemini</VSCodeOption>
+					<VSCodeOption value="gemini-cli">Gemini CLI Provider</VSCodeOption>
 					<VSCodeOption value="deepseek">DeepSeek</VSCodeOption>
 					<VSCodeOption value="mistral">Mistral</VSCodeOption>
 					<VSCodeOption value="openai-native">OpenAI</VSCodeOption>
@@ -341,35 +338,13 @@ const ApiOptions = ({
 				</div>
 			)}
 
-			{selectedProvider === "openai-native" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.openAiNativeApiKey || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("openAiNativeApiKey")}
-						placeholder="Enter API Key...">
-						<span style={{ fontWeight: 500 }}>OpenAI API Key</span>
-					</VSCodeTextField>
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						This key is stored locally and only used to make API requests from this extension.
-						{!apiConfiguration?.openAiNativeApiKey && (
-							<VSCodeLink
-								href="https://platform.openai.com/api-keys"
-								style={{
-									display: "inline",
-									fontSize: "inherit",
-								}}>
-								You can get an OpenAI API key by signing up here.
-							</VSCodeLink>
-						)}
-					</p>
-				</div>
+			{apiConfiguration && selectedProvider === "openai-native" && (
+				<OpenAINativeProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
 			{selectedProvider === "qwen" && (
@@ -838,70 +813,23 @@ const ApiOptions = ({
 				</div>
 			)}
 
-			{selectedProvider === "gemini" && (
-				<div>
-					<VSCodeTextField
-						value={apiConfiguration?.geminiApiKey || ""}
-						style={{ width: "100%" }}
-						type="password"
-						onInput={handleInputChange("geminiApiKey")}
-						placeholder="Enter API Key...">
-						<span style={{ fontWeight: 500 }}>Gemini API Key</span>
-					</VSCodeTextField>
+			{apiConfiguration && selectedProvider === "gemini" && (
+				<GeminiProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+					setApiConfiguration={setApiConfiguration}
+				/>
+			)}
 
-					<VSCodeCheckbox
-						checked={geminiBaseUrlSelected}
-						onChange={(e: any) => {
-							const isChecked = e.target.checked === true
-							setGeminiBaseUrlSelected(isChecked)
-							if (!isChecked) {
-								setApiConfiguration({
-									...apiConfiguration,
-									geminiBaseUrl: "",
-								})
-							}
-						}}>
-						Use custom base URL
-					</VSCodeCheckbox>
-
-					{geminiBaseUrlSelected && (
-						<VSCodeTextField
-							value={apiConfiguration?.geminiBaseUrl || ""}
-							style={{ width: "100%", marginTop: 3 }}
-							type="url"
-							onInput={handleInputChange("geminiBaseUrl")}
-							placeholder="Default: https://generativelanguage.googleapis.com"
-						/>
-					)}
-
-					<p
-						style={{
-							fontSize: "12px",
-							marginTop: 3,
-							color: "var(--vscode-descriptionForeground)",
-						}}>
-						This key is stored locally and only used to make API requests from this extension.
-						{!apiConfiguration?.geminiApiKey && (
-							<VSCodeLink
-								href="https://aistudio.google.com/apikey"
-								style={{
-									display: "inline",
-									fontSize: "inherit",
-								}}>
-								You can get a Gemini API key by signing up here.
-							</VSCodeLink>
-						)}
-					</p>
-
-					{/* Add Thinking Budget Slider specifically for gemini-2.5-flash-preview-04-17 */}
-					{selectedProvider === "gemini" && selectedModelId === "gemini-2.5-flash-preview-04-17" && (
-						<ThinkingBudgetSlider
-							apiConfiguration={apiConfiguration}
-							setApiConfiguration={setApiConfiguration}
-							maxBudget={selectedModelInfo.thinkingConfig?.maxBudget}
-						/>
-					)}
-				</div>
+			{apiConfiguration && selectedProvider === "gemini-cli" && (
+				<GeminiCliProvider
+					apiConfiguration={apiConfiguration}
+					handleInputChange={handleInputChange}
+					showModelOptions={showModelOptions}
+					isPopup={isPopup}
+				/>
 			)}
 
 			{selectedProvider === "requesty" && (
@@ -1054,7 +982,7 @@ const ApiOptions = ({
 								}}>
 								The VS Code Language Model API allows you to run models provided by other VS Code extensions
 								(including but not limited to GitHub Copilot). The easiest way to get started is to install the
-								Copilot extension from the VS Marketplace and enabling Claude 3.7 Sonnet.
+								Copilot extension from the VS Marketplace and enabling Claude 4 Sonnet.
 							</p>
 						)}
 
@@ -1672,6 +1600,9 @@ const ApiOptions = ({
 				selectedProvider !== "mistral" &&
 				selectedProvider !== "deepseek" &&
 				selectedProvider !== "sambanova" &&
+				selectedProvider !== "openai-native" &&
+				selectedProvider !== "gemini" &&
+				selectedProvider !== "gemini-cli" &&
 				showModelOptions && (
 					<>
 						<DropdownContainer zIndex={DROPDOWN_Z_INDEX - 2} className="dropdown-container">
@@ -1681,8 +1612,6 @@ const ApiOptions = ({
 							{selectedProvider === "claude-code" && createDropdown(claudeCodeModels)}
 							{selectedProvider === "vertex" &&
 								createDropdown(apiConfiguration?.vertexRegion === "global" ? vertexGlobalModels : vertexModels)}
-							{selectedProvider === "gemini" && createDropdown(geminiModels)}
-							{selectedProvider === "openai-native" && createDropdown(openAiNativeModels)}
 							{selectedProvider === "qwen" &&
 								createDropdown(
 									apiConfiguration?.qwenApiLine === "china" ? mainlandQwenModels : internationalQwenModels,
