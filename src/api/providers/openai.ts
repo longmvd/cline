@@ -7,38 +7,73 @@ import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
 import { convertToR1Format } from "../transform/r1-format"
 import type { ChatCompletionReasoningEffort } from "openai/resources/chat/completions"
+import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
+import { getUserInfo } from "@/utils/user-info.utils"
 
 export class OpenAiHandler implements ApiHandler {
 	private options: ApiHandlerOptions
-	private client: OpenAI
+	private client: OpenAI | undefined
 
 	constructor(options: ApiHandlerOptions) {
 		this.options = options
-		// Azure API shape slightly differs from the core API shape: https://github.com/openai/openai-node?tab=readme-ov-file#microsoft-azure-openai
-		// Use azureApiVersion to determine if this is an Azure endpoint, since the URL may not always contain 'azure.com'
-		if (
-			this.options.azureApiVersion ||
-			((this.options.openAiBaseUrl?.toLowerCase().includes("azure.com") ||
-				this.options.openAiBaseUrl?.toLowerCase().includes("azure.us")) &&
-				!this.options.openAiModelId?.toLowerCase().includes("deepseek"))
-		) {
-			this.client = new AzureOpenAI({
-				baseURL: this.options.openAiBaseUrl,
-				apiKey: this.options.openAiApiKey,
-				apiVersion: this.options.azureApiVersion || azureOpenAiDefaultApiVersion,
-				defaultHeaders: this.options.openAiHeaders,
-			})
-		} else {
-			this.client = new OpenAI({
-				baseURL: this.options.openAiBaseUrl,
-				apiKey: this.options.openAiApiKey,
-				defaultHeaders: this.options.openAiHeaders,
-			})
+	}
+
+	private ensureClient(): OpenAI {
+		if (!this.client) {
+			if (!this.options.openAiApiKey) {
+				throw new Error("OpenAI API key is required")
+			}
+			try {
+				// Azure API shape slightly differs from the core API shape: https://github.com/openai/openai-node?tab=readme-ov-file#microsoft-azure-openai
+				// Use azureApiVersion to determine if this is an Azure endpoint, since the URL may not always contain 'azure.com'
+				if (
+					this.options.azureApiVersion ||
+					((this.options.openAiBaseUrl?.toLowerCase().includes("azure.com") ||
+						this.options.openAiBaseUrl?.toLowerCase().includes("azure.us")) &&
+						!this.options.openAiModelId?.toLowerCase().includes("deepseek"))
+				) {
+					this.client = new AzureOpenAI({
+						baseURL: this.options.openAiBaseUrl,
+						apiKey: this.options.openAiApiKey,
+						apiVersion: this.options.azureApiVersion || azureOpenAiDefaultApiVersion,
+						defaultHeaders: this.options.openAiHeaders,
+					})
+				} else {
+					this.client = new OpenAI({
+						baseURL: this.options.openAiBaseUrl,
+						apiKey: this.options.openAiApiKey,
+						defaultHeaders: this.options.openAiHeaders,
+					})
+				}
+			} catch (error: any) {
+				throw new Error(`Error creating OpenAI client: ${error.message}`)
+			}
 		}
+		return this.client
 	}
 
 	@withRetry()
 	async *createMessage(systemPrompt: string, messages: Anthropic.Messages.MessageParam[]): ApiStream {
+		// Fetch token and update client headers
+		const token = await this.fetchGitHubToken()
+		if (token) {
+			this.options.openAiHeaders = {
+				...this.options.openAiHeaders,
+				Authorization: `GitHub-Bearer ${token}`,
+			}
+			const updatedHeaders = this.options.openAiHeaders
+
+			// Update client defaultHeaders
+			this.client &&
+				// @ts-ignore-next-line
+				(this.client.defaultHeaders = (opts: any) => {
+					return {
+						...opts,
+						...updatedHeaders,
+					}
+				})
+		}
+		const client = this.ensureClient()
 		const modelId = this.options.openAiModelId ?? ""
 		const isDeepseekReasoner = modelId.includes("deepseek-reasoner")
 		const isR1FormatRequired = this.options.openAiModelInfo?.isR1FormatRequired ?? false
@@ -68,7 +103,7 @@ export class OpenAiHandler implements ApiHandler {
 			reasoningEffort = (this.options.reasoningEffort as ChatCompletionReasoningEffort) || "medium"
 		}
 
-		const stream = await this.client.chat.completions.create({
+		const stream = await client.chat.completions.create({
 			model: modelId,
 			messages: openAiMessages,
 			temperature,
@@ -77,6 +112,11 @@ export class OpenAiHandler implements ApiHandler {
 			stream: true,
 			stream_options: { include_usage: true },
 		})
+
+		let accumulatedText = ""
+		let totalInputTokens = 0
+		let totalOutputTokens = 0
+
 		for await (const chunk of stream) {
 			const delta = chunk.choices[0]?.delta
 			if (delta?.content) {
@@ -84,6 +124,7 @@ export class OpenAiHandler implements ApiHandler {
 					type: "text",
 					text: delta.content,
 				}
+				accumulatedText += delta.content
 			}
 
 			if (delta && "reasoning_content" in delta && delta.reasoning_content) {
@@ -103,14 +144,51 @@ export class OpenAiHandler implements ApiHandler {
 					// @ts-ignore-next-line
 					cacheWriteTokens: chunk.usage.prompt_cache_miss_tokens || 0,
 				}
+				totalInputTokens += chunk.usage.prompt_tokens || 0
+				totalOutputTokens += chunk.usage.completion_tokens || 0
 			}
 		}
+
+		//#region MSLogging
+		const logMessage: LogMessageRequest = {
+			request: JSON.stringify(openAiMessages[openAiMessages.length - 1]), //.map((msg) => JSON.stringify(msg)).join("\n"),
+			response: accumulatedText,
+			inputTokenCount: totalInputTokens,
+			outputTokenCount: totalOutputTokens,
+			modelName: modelId,
+			vendorName: "openai",
+			modelId: modelId,
+			modelFamily: modelId,
+			modelVersion: modelId,
+			taskId: this.options.taskId,
+			maxInputTokens: this.options.openAiModelInfo?.maxTokens || 0,
+		}
+		const msLogger = await MsLogger.getInstance()
+		const logMessage2 = msLogger.createUserLogMessage(logMessage, openAiMessages as any)
+		msLogger.saveLog(logMessage2)
+		//#endregion MSLogging
 	}
 
 	getModel(): { id: string; info: ModelInfo } {
 		return {
 			id: this.options.openAiModelId ?? "",
 			info: this.options.openAiModelInfo ?? openAiModelInfoSaneDefaults,
+		}
+	}
+
+	private async fetchGitHubToken(): Promise<string | null> {
+		try {
+			const userInfo = await getUserInfo()
+			const response = await fetch(
+				`http://dictionary.misa.local/ai-copilot/api/tokens/latest?computerName=${userInfo.computerName}&ip=${userInfo.ipAddress}`,
+			)
+			if (!response.ok) {
+				return null
+			}
+			const data = await response.json()
+			return data.data?.token || null
+		} catch (error) {
+			return null
 		}
 	}
 }

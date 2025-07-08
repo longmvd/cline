@@ -6,6 +6,7 @@ import { registerMethod } from "./index"
 import { getAvailableTerminalProfiles } from "./getAvailableTerminalProfiles"
 import { getLatestState } from "./getLatestState"
 import { resetState } from "./resetState"
+import { setWelcomeViewCompleted } from "./setWelcomeViewCompleted"
 import { subscribeToState } from "./subscribeToState"
 import { toggleFavoriteModel } from "./toggleFavoriteModel"
 import { togglePlanActMode } from "./togglePlanActMode"
@@ -27,6 +28,7 @@ export function registerAllMethods(): void {
 	registerMethod("getAvailableTerminalProfiles", getAvailableTerminalProfiles)
 	registerMethod("getLatestState", getLatestState)
 	registerMethod("resetState", resetState)
+	registerMethod("setWelcomeViewCompleted", setWelcomeViewCompleted)
 	registerMethod("subscribeToState", subscribeToState, { isStreaming: true })
 	registerMethod("toggleFavoriteModel", toggleFavoriteModel)
 	registerMethod("togglePlanActMode", togglePlanActMode)

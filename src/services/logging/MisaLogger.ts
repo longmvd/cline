@@ -8,6 +8,7 @@ import * as vscode from "vscode"
 import { withProxy } from "../../utils/proxy"
 import { getUserInfo, MsUserInfo } from "./../../utils/user-info.utils"
 import { Logger } from "./Logger"
+import { findLast } from "@shared/array"
 
 export interface LogMessage {
 	id: number
@@ -63,6 +64,7 @@ export class MsLogger {
 	private encryptedJsonLogsPath: string = ""
 	private db: Database.Database | null = null
 	private saveLogToServerJobInterval?: NodeJS.Timeout
+	private latestUserLogMessage: LogMessageRequest | null = null
 
 	// Default log directory name in user's home directory
 	private static readonly DEFAULT_LOG_DIRECTORY = ".cline/logs"
@@ -886,33 +888,12 @@ export class MsLogger {
 				)
 				if (userPrompt) {
 					// Regex to extract user message and task in tag <user_message> </user_message> and <task> </task>
-					const userMessageMatch = userPrompt.text.match(/<user_message>(.*?)<\/user_message>/s)
-					const taskMatch = userPrompt.text.match(/<task>(.*?)<\/task>/s)
-					const feedbackMatch = userPrompt.text.match(/<feedback>(.*?)<\/feedback>/s)
-
-					let extractedContent = ""
-
-					if (userMessageMatch) {
-						extractedContent += userMessageMatch[1].trim()
-					}
-
-					if (taskMatch) {
-						if (extractedContent) {
-							extractedContent += " | " // Separator if both exist
-						}
-						extractedContent += taskMatch[1].trim()
-					}
-
-					if (feedbackMatch) {
-						if (extractedContent) {
-							extractedContent += " | " // Separator if both exist
-						}
-						extractedContent += feedbackMatch[1].trim()
-					}
+					let extractedContent = this.extractUserMessage(userPrompt.text)
 
 					if (extractedContent) {
 						message.userPrompt = extractedContent
 						message.messageType = MessageType.User
+						this.latestUserLogMessage = { ...message }
 					} else {
 						message.messageType = MessageType.System
 					}
@@ -921,5 +902,90 @@ export class MsLogger {
 		} catch (error) {
 			Logger.log("Error processing message: " + JSON.stringify(error))
 		}
+	}
+
+	private extractUserMessage(userPrompt: string) {
+		const userMessageMatch = userPrompt.match(/<user_message>(.*?)<\/user_message>/s)
+		const taskMatch = userPrompt.match(/<task>(.*?)<\/task>/s)
+		const feedbackMatch = userPrompt.match(/<feedback>(.*?)<\/feedback>/s)
+
+		let extractedContent = ""
+
+		if (userMessageMatch) {
+			extractedContent += userMessageMatch[1].trim()
+		}
+
+		if (taskMatch) {
+			if (extractedContent) {
+				extractedContent += " | " // Separator if both exist
+			}
+			extractedContent += taskMatch[1].trim()
+		}
+
+		if (feedbackMatch) {
+			if (extractedContent) {
+				extractedContent += " | " // Separator if both exist
+			}
+			extractedContent += feedbackMatch[1].trim()
+		}
+		return extractedContent
+	}
+
+	public createUserLogMessage(logMessage: LogMessageRequest, cleanedMessages: { content: any; role: "user" | "assistant" }[]) {
+		let request = findLast(
+			cleanedMessages,
+			(msg) =>
+				msg.role === "user" &&
+				(msg.content as { text: string; type: string }[])?.some(
+					(content) =>
+						(content.type === "text" && content.text.includes("</user_message>")) ||
+						content.text.includes("</task>") ||
+						content.text.includes("</feedback>") ||
+						content.text.includes("</answer>"),
+				),
+		)
+		if (!request || this.isDuplicatedLogMessage(request)) {
+			request = cleanedMessages[cleanedMessages.length - 1]
+		}
+		const result = {
+			...logMessage,
+			request: JSON.stringify(request ?? cleanedMessages[cleanedMessages.length - 1]),
+		} as LogMessageRequest
+
+		return result
+	}
+
+	// async isDuplicatedLogMessage(request: MessageRequest) {
+	// 	const pageData = (await this.httpClient.post("/list", {
+	// 		skip: 0,
+	// 		take: 100,
+	// 		sorts: [
+	// 			{
+	// 				selector: "CreatedDate",
+	// 				desc: true,
+	// 			},
+	// 		],
+	// 		filter: JSON.stringify([{ Field: "MessageType", Operator: "=", Value: 1 },{ Field: "TaskID", Operator: "=", Value: this.taskId }]),
+	// 		emptyFilter: "",
+	// 		columns: "userPrompt,TaskID",
+	// 	}))?.data?.PageData as LogMessageRequest[]
+	// 	if(!pageData || pageData.length === 0) {
+	// 		return false
+	// 	}
+	// 	const logMessages = pageData?.findIndex((log) => {
+	// 		return request.content.findIndex( content => content.text === log.userPrompt) !== -1
+	// 	})
+	// 	return logMessages !== -1
+	// }
+
+	isDuplicatedLogMessage(request: MessageRequest) {
+		if (this.taskId === this.latestUserLogMessage?.taskId) {
+			const index = request.content.findIndex((content) => {
+				let currentUserPrompt = this.extractUserMessage(content.text ?? "")
+				return this.latestUserLogMessage?.userPrompt === currentUserPrompt
+			})
+			return index !== -1
+		}
+		return false
 	}
 }

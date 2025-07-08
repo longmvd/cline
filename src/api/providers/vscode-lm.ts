@@ -534,7 +534,8 @@ export class VsCodeLmHandler implements ApiHandler, SingleCompletionHandler {
 				maxInputTokens: client.maxInputTokens,
 			}
 			const msLogger = await MsLogger.getInstance()
-			msLogger.saveLog(logMessage)
+			const logMessage2 = msLogger.createUserLogMessage(logMessage, cleanedMessages)
+			msLogger.saveLog(logMessage2)
 			//#endregion MSLogging
 
 			// Report final usage after stream completion
