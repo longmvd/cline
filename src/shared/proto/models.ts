@@ -309,7 +309,7 @@ export interface ModelsApiConfiguration {
   /** From ApiHandlerOptions (excluding onRetryAttempt function) */
   apiModelId?: string | undefined;
   apiKey?: string | undefined;
-  clineApiKey?: string | undefined;
+  clineAccountId?: string | undefined;
   taskId?: string | undefined;
   liteLlmBaseUrl?: string | undefined;
   liteLlmModelId?: string | undefined;
@@ -2015,7 +2015,7 @@ function createBaseModelsApiConfiguration(): ModelsApiConfiguration {
   return {
     apiModelId: undefined,
     apiKey: undefined,
-    clineApiKey: undefined,
+    clineAccountId: undefined,
     taskId: undefined,
     liteLlmBaseUrl: undefined,
     liteLlmModelId: undefined,
@@ -2097,8 +2097,8 @@ export const ModelsApiConfiguration: MessageFns<ModelsApiConfiguration> = {
     if (message.apiKey !== undefined) {
       writer.uint32(18).string(message.apiKey);
     }
-    if (message.clineApiKey !== undefined) {
-      writer.uint32(26).string(message.clineApiKey);
+    if (message.clineAccountId !== undefined) {
+      writer.uint32(26).string(message.clineAccountId);
     }
     if (message.taskId !== undefined) {
       writer.uint32(34).string(message.taskId);
@@ -2341,7 +2341,7 @@ export const ModelsApiConfiguration: MessageFns<ModelsApiConfiguration> = {
             break;
           }
 
-          message.clineApiKey = reader.string();
+          message.clineAccountId = reader.string();
           continue;
         }
         case 4: {
@@ -2920,7 +2920,7 @@ export const ModelsApiConfiguration: MessageFns<ModelsApiConfiguration> = {
     return {
       apiModelId: isSet(object.apiModelId) ? globalThis.String(object.apiModelId) : undefined,
       apiKey: isSet(object.apiKey) ? globalThis.String(object.apiKey) : undefined,
-      clineApiKey: isSet(object.clineApiKey) ? globalThis.String(object.clineApiKey) : undefined,
+      clineAccountId: isSet(object.clineAccountId) ? globalThis.String(object.clineAccountId) : undefined,
       taskId: isSet(object.taskId) ? globalThis.String(object.taskId) : undefined,
       liteLlmBaseUrl: isSet(object.liteLlmBaseUrl) ? globalThis.String(object.liteLlmBaseUrl) : undefined,
       liteLlmModelId: isSet(object.liteLlmModelId) ? globalThis.String(object.liteLlmModelId) : undefined,
@@ -3039,8 +3039,8 @@ export const ModelsApiConfiguration: MessageFns<ModelsApiConfiguration> = {
     if (message.apiKey !== undefined) {
       obj.apiKey = message.apiKey;
     }
-    if (message.clineApiKey !== undefined) {
-      obj.clineApiKey = message.clineApiKey;
+    if (message.clineAccountId !== undefined) {
+      obj.clineAccountId = message.clineAccountId;
     }
     if (message.taskId !== undefined) {
       obj.taskId = message.taskId;
@@ -3268,7 +3268,7 @@ export const ModelsApiConfiguration: MessageFns<ModelsApiConfiguration> = {
     const message = createBaseModelsApiConfiguration();
     message.apiModelId = object.apiModelId ?? undefined;
     message.apiKey = object.apiKey ?? undefined;
-    message.clineApiKey = object.clineApiKey ?? undefined;
+    message.clineAccountId = object.clineAccountId ?? undefined;
     message.taskId = object.taskId ?? undefined;
     message.liteLlmBaseUrl = object.liteLlmBaseUrl ?? undefined;
     message.liteLlmModelId = object.liteLlmModelId ?? undefined;

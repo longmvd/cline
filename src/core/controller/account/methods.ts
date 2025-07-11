@@ -6,12 +6,15 @@ import { registerMethod } from "./index"
 import { accountLoginClicked } from "./accountLoginClicked"
 import { accountLogoutClicked } from "./accountLogoutClicked"
 import { authStateChanged } from "./authStateChanged"
-import { fetchUserCreditsData } from "./fetchUserCreditsData"
-import { subscribeToAuthCallback } from "./subscribeToAuthCallback"
+import { getOrganizationCredits } from "./getOrganizationCredits"
+import { getUserCredits } from "./getUserCredits"
+import { getUserOrganizations } from "./getUserOrganizations"
+import { setUserOrganization } from "./setUserOrganization"
+import { subscribeToAuthStatusUpdate } from "./subscribeToAuthStatusUpdate"
 
 // Streaming methods for this service
 export const streamingMethods = [
-  "subscribeToAuthCallback"
+  "subscribeToAuthStatusUpdate"
 ]
 
 // Register all account service methods
@@ -20,6 +23,9 @@ export function registerAllMethods(): void {
 	registerMethod("accountLoginClicked", accountLoginClicked)
 	registerMethod("accountLogoutClicked", accountLogoutClicked)
 	registerMethod("authStateChanged", authStateChanged)
-	registerMethod("fetchUserCreditsData", fetchUserCreditsData)
-	registerMethod("subscribeToAuthCallback", subscribeToAuthCallback, { isStreaming: true })
+	registerMethod("getOrganizationCredits", getOrganizationCredits)
+	registerMethod("getUserCredits", getUserCredits)
+	registerMethod("getUserOrganizations", getUserOrganizations)
+	registerMethod("setUserOrganization", setUserOrganization)
+	registerMethod("subscribeToAuthStatusUpdate", subscribeToAuthStatusUpdate, { isStreaming: true })
 }

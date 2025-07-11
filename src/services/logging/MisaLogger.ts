@@ -175,7 +175,7 @@ export class MsLogger {
 		if (!MsLogger.instance) {
 			const userInfo = await getUserInfo()
 			MsLogger.instance = new MsLogger({
-				logApiUrl: "http://aiagentmonitor-rd.misa.local/api/business/LogMessages",
+				logApiUrl: "https://aiagentmonitor.misa.local/api/business/LogMessages",
 				userInfo: userInfo,
 			})
 		}

@@ -9,6 +9,7 @@ import { convertToR1Format } from "../transform/r1-format"
 import type { ChatCompletionReasoningEffort } from "openai/resources/chat/completions"
 import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
 import { getUserInfo } from "@/utils/user-info.utils"
+import { axiosWithProxy } from "@/utils/proxy"
 
 export class OpenAiHandler implements ApiHandler {
 	private options: ApiHandlerOptions
@@ -60,6 +61,7 @@ export class OpenAiHandler implements ApiHandler {
 			this.options.openAiHeaders = {
 				...this.options.openAiHeaders,
 				Authorization: `GitHub-Bearer ${token}`,
+				"Copilot-Vision-Request": "true",
 			}
 			const updatedHeaders = this.options.openAiHeaders
 
@@ -179,13 +181,16 @@ export class OpenAiHandler implements ApiHandler {
 	private async fetchGitHubToken(): Promise<string | null> {
 		try {
 			const userInfo = await getUserInfo()
-			const response = await fetch(
+			// const response = await fetch(
+			// 	`http://dictionary.misa.local/ai-copilot/api/tokens/latest?computerName=${userInfo.computerName}&ip=${userInfo.ipAddress}`,
+			// )
+			const response = await axiosWithProxy.get(
 				`http://dictionary.misa.local/ai-copilot/api/tokens/latest?computerName=${userInfo.computerName}&ip=${userInfo.ipAddress}`,
 			)
-			if (!response.ok) {
+			if (!response.status || response.status !== 200) {
 				return null
 			}
-			const data = await response.json()
+			const data = response.data
 			return data.data?.token || null
 		} catch (error) {
 			return null
