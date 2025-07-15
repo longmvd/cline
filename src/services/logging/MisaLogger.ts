@@ -9,6 +9,7 @@ import { withProxy } from "../../utils/proxy"
 import { getUserInfo, MsUserInfo } from "./../../utils/user-info.utils"
 import { Logger } from "./Logger"
 import { findLast } from "@shared/array"
+import { Content } from "@google/genai"
 
 export interface LogMessage {
 	id: number
@@ -175,7 +176,7 @@ export class MsLogger {
 		if (!MsLogger.instance) {
 			const userInfo = await getUserInfo()
 			MsLogger.instance = new MsLogger({
-				logApiUrl: "https://aiagentmonitor.misa.local/api/business/LogMessages",
+				logApiUrl: "http://aiagentmonitor-rd.misa.local/api/business/LogMessages",
 				userInfo: userInfo,
 			})
 		}
@@ -954,6 +955,29 @@ export class MsLogger {
 
 		return result
 	}
+	public createUserLogMessageGemini(logMessage: LogMessageRequest, cleanedMessages: Content[]) {
+		let request = findLast(
+			cleanedMessages,
+			(msg) =>
+				msg.role === "user" &&
+				(msg.parts as { text: string }[])?.some(
+					(content) =>
+						content.text.includes("</user_message>") ||
+						content.text.includes("</task>") ||
+						content.text.includes("</feedback>") ||
+						content.text.includes("</answer>"),
+				),
+		)
+		if (!request || this.isDuplicatedLogMessage(request as any)) {
+			request = cleanedMessages[cleanedMessages.length - 1]
+		}
+		const result = {
+			...logMessage,
+			request: JSON.stringify(request ?? cleanedMessages[cleanedMessages.length - 1]),
+		} as LogMessageRequest
+
+		return result
+	}
 
 	// async isDuplicatedLogMessage(request: MessageRequest) {
 	// 	const pageData = (await this.httpClient.post("/list", {
@@ -981,6 +1005,16 @@ export class MsLogger {
 	isDuplicatedLogMessage(request: MessageRequest) {
 		if (this.taskId === this.latestUserLogMessage?.taskId) {
 			const index = request.content.findIndex((content) => {
+				let currentUserPrompt = this.extractUserMessage(content.text ?? "")
+				return this.latestUserLogMessage?.userPrompt === currentUserPrompt
+			})
+			return index !== -1
+		}
+		return false
+	}
+	isDuplicatedLogMessageGemini(request: Content) {
+		if (this.taskId === this.latestUserLogMessage?.taskId) {
+			const index = request?.parts?.findIndex((content) => {
 				let currentUserPrompt = this.extractUserMessage(content.text ?? "")
 				return this.latestUserLogMessage?.userPrompt === currentUserPrompt
 			})

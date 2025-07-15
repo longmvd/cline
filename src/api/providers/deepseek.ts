@@ -9,11 +9,17 @@ import { convertToOpenAiMessages } from "../transform/openai-format"
 import { convertToR1Format } from "../transform/r1-format"
 import { ApiStream } from "../transform/stream"
 
+interface DeepSeekHandlerOptions {
+	deepSeekApiKey?: string
+	apiModelId?: string
+	taskId?: string
+}
+
 export class DeepSeekHandler implements ApiHandler {
-	private options: ApiHandlerOptions
+	private options: DeepSeekHandlerOptions
 	private client: OpenAI | undefined
 
-	constructor(options: ApiHandlerOptions) {
+	constructor(options: DeepSeekHandlerOptions) {
 		this.options = options
 	}
 
@@ -119,7 +125,7 @@ export class DeepSeekHandler implements ApiHandler {
 		}
 		//#region MSLogging
 		const logMessage: LogMessageRequest = {
-			request: openAiMessages.map((msg) => JSON.stringify(msg)).join("\n"),
+			request: JSON.stringify(openAiMessages[openAiMessages.length - 1]),
 			response: accumulatedText,
 			inputTokenCount: totalInputTokens,
 			outputTokenCount: totalOutputTokens,
@@ -132,7 +138,8 @@ export class DeepSeekHandler implements ApiHandler {
 			maxInputTokens: model.info.maxTokens,
 		}
 		const msLogger = await MsLogger.getInstance()
-		msLogger.saveLog(logMessage)
+		const logMessage2 = msLogger.createUserLogMessageGemini(logMessage, openAiMessages)
+		msLogger.saveLog(logMessage2)
 		//#endregion MSLogging
 	}
 

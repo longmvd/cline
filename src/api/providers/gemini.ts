@@ -13,8 +13,15 @@ import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
 // Define a default TTL for the cache (e.g., 15 minutes in seconds)
 const DEFAULT_CACHE_TTL_SECONDS = 900
 
-interface GeminiHandlerOptions extends ApiHandlerOptions {
+interface GeminiHandlerOptions {
 	isVertex?: boolean
+	vertexProjectId?: string
+	vertexRegion?: string
+	geminiApiKey?: string
+	geminiBaseUrl?: string
+	thinkingBudgetTokens?: number
+	apiModelId?: string
+	taskId?: string
 }
 
 /**
@@ -212,7 +219,7 @@ export class GeminiHandler implements ApiHandler {
 				}
 				//#region MSLogging
 				const logMessage: LogMessageRequest = {
-					request: contents.map((msg) => JSON.stringify(msg)).join("\n"),
+					request: JSON.stringify(contents[contents.length - 1]),
 					response: accumulatedText,
 					inputTokenCount: lastUsageMetadata?.promptTokenCount ?? 0,
 					outputTokenCount: lastUsageMetadata?.candidatesTokenCount ?? 0,
@@ -225,7 +232,8 @@ export class GeminiHandler implements ApiHandler {
 					maxInputTokens: info.maxTokens,
 				}
 				const msLogger = await MsLogger.getInstance()
-				msLogger.saveLog(logMessage)
+				const logMessage2 = msLogger.createUserLogMessageGemini(logMessage, contents)
+				msLogger.saveLog(logMessage2)
 				//#endregion MSLogging
 			}
 		} catch (error) {

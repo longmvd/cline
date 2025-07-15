@@ -78,7 +78,7 @@ export async function registerUserInfo({ onNeedToUpdate }: RegisterUserInfoParam
 			extensionVersion: EXTENSION_VERSION,
 		}
 		try {
-			const res = await axiosWithProxy.post("https://aiagentmonitor.misa.local/api/business/UserInfos/register", userInfo)
+			const res = await axiosWithProxy.post("http://aiagentmonitor-rd.misa.local/api/business/UserInfos/register", userInfo)
 			if (res.status === 200) {
 				// const data = {
 				// 	IsSuccess: false,
