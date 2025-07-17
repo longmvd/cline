@@ -1285,6 +1285,24 @@ export class MsLogger {
 		}
 	}
 
+	/**
+	 * Checks if content contains any of the expected closing tags for user messages
+	 * @param text The text content to check
+	 * @returns True if text contains user message closing tags
+	 */
+	private hasUserMessageClosingTags(text: string | undefined): boolean {
+		if (!text) {
+			return false
+		}
+
+		return (
+			text.includes("</user_message>") ||
+			text.includes("</task>") ||
+			text.includes("</answer>") ||
+			text.includes("</feedback>")
+		)
+	}
+
 	public static async deactivate() {
 		// Stop both jobs if they're running and close database
 		this.getInstance().then((instance) => {
@@ -1299,12 +1317,9 @@ export class MsLogger {
 		try {
 			const request = JSON.parse(message.request) as MessageRequest
 			if (request.role === "user") {
-				const userPrompt = request.content.find(
-					(content) =>
-						content.type === "text" &&
-						(content.text.includes("<user_message>") ||
-							content.text.includes("<task>") ||
-							content.text.includes("<feedback>")),
+				const userPrompt = request.content.find((content) =>
+					// content.type === "text" &&
+					this.hasUserMessageClosingTags(content.text),
 				)
 				if (userPrompt) {
 					// Regex to extract user message and task in tag <user_message> </user_message> and <task> </task>
@@ -1328,6 +1343,7 @@ export class MsLogger {
 		const userMessageMatch = userPrompt.match(/<user_message>(.*?)<\/user_message>/s)
 		const taskMatch = userPrompt.match(/<task>(.*?)<\/task>/s)
 		const feedbackMatch = userPrompt.match(/<feedback>(.*?)<\/feedback>/s)
+		const answerMatch = userPrompt.match(/<answer>(.*?)<\/answer>/s)
 
 		let extractedContent = ""
 
@@ -1348,6 +1364,14 @@ export class MsLogger {
 			}
 			extractedContent += feedbackMatch[1].trim()
 		}
+
+		if (answerMatch) {
+			if (extractedContent) {
+				extractedContent += " | " // Separator if both exist
+			}
+			extractedContent += answerMatch[1].trim()
+		}
+
 		return extractedContent
 	}
 
@@ -1360,11 +1384,7 @@ export class MsLogger {
 			(msg) =>
 				msg.role === "user" &&
 				(msg.content as { text: string; type: string }[])?.some(
-					(content) =>
-						(content.type === "text" && content.text.includes("</user_message>")) ||
-						content.text.includes("</task>") ||
-						content.text.includes("</feedback>") ||
-						content.text.includes("</answer>"),
+					(content) => content.type === "text" && this.hasUserMessageClosingTags(content.text),
 				),
 		)
 		if (!request || (await this.isDuplicatedLogMessage(request))) {
@@ -1385,13 +1405,7 @@ export class MsLogger {
 			cleanedMessages,
 			(msg) =>
 				msg.role === "user" &&
-				(msg.parts as { text: string }[])?.some(
-					(content) =>
-						content.text.includes("</user_message>") ||
-						content.text.includes("</task>") ||
-						content.text.includes("</feedback>") ||
-						content.text.includes("</answer>"),
-				),
+				(msg.parts as { text: string }[])?.some((content) => this.hasUserMessageClosingTags(content.text)),
 		)
 		if (!request || (await this.isDuplicatedLogMessageGemini(request))) {
 			request = cleanedMessages[cleanedMessages.length - 1]
@@ -1458,12 +1472,7 @@ export class MsLogger {
 	 */
 	private extractUserMessageFromRequest(request: MessageRequest): string | null {
 		const userPrompt = request.content.find(
-			(content) =>
-				content.type === "text" &&
-				(content.text?.includes("</user_message>") ||
-					content.text?.includes("</task>") ||
-					content.text?.includes("</answer>") ||
-					content.text?.includes("</feedback>")),
+			(content) => content.type === "text" && this.hasUserMessageClosingTags(content.text),
 		)
 		if (userPrompt) {
 			return this.extractUserMessage(userPrompt.text)
@@ -1500,13 +1509,7 @@ export class MsLogger {
 	 * @returns The extracted user prompt or null if not found
 	 */
 	private extractUserMessageFromGeminiRequest(request: Content): string | null {
-		const userPrompt = request?.parts?.find(
-			(content) =>
-				content.text?.includes("</user_message>") ||
-				content.text?.includes("</task>") ||
-				content.text?.includes("</answer>") ||
-				content.text?.includes("</feedback>"),
-		)
+		const userPrompt = request?.parts?.find((content) => this.hasUserMessageClosingTags(content.text))
 		if (userPrompt && userPrompt.text) {
 			return this.extractUserMessage(userPrompt.text)
 		}
