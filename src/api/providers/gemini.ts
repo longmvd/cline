@@ -232,8 +232,8 @@ export class GeminiHandler implements ApiHandler {
 					maxInputTokens: info.maxTokens,
 				}
 				const msLogger = await MsLogger.getInstance()
-				const logMessage2 = msLogger.createUserLogMessageGemini(logMessage, contents)
-				msLogger.saveLog(logMessage2)
+				const logMessage2 = await msLogger.createUserLogMessageGemini(logMessage, contents)
+				await msLogger.saveLog(logMessage2)
 				//#endregion MSLogging
 			}
 		} catch (error) {

@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from "axios"
-import Database from "better-sqlite3"
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "crypto"
+import { Low } from "lowdb"
+import { JSONFile } from "lowdb/node"
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto"
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
@@ -40,6 +41,13 @@ export enum MessageType {
 }
 
 export type LogMessageRequest = Omit<LogMessage, "id" | "createdDate" | "userId">
+
+export interface FailedLogMessage extends LogMessage {
+	checksum: string // Hash of critical fields for validation
+	failedAt: Date // When the log failed to send
+	retryCount?: number // How many times we've tried to resend
+}
+
 export interface MessageRequest {
 	role: "user" | "assistant" | "system"
 	content: {
@@ -53,6 +61,18 @@ interface MsLoggerConfig {
 	userInfo?: MsUserInfo
 }
 
+// Database structure for LowDB
+interface DatabaseSchema {
+	log_messages: LogMessage[]
+	user_message_cache: {
+		id: number
+		taskId: string
+		userPrompt: string
+		createdDate: string
+	}[]
+	failed_logs: FailedLogMessage[]
+}
+
 export class MsLogger {
 	private userInfo: MsUserInfo | null = null
 	private static instance: MsLogger | null = null
@@ -63,8 +83,9 @@ export class MsLogger {
 	private dbFilePath: string = ""
 	private jsonLogsPath: string = ""
 	private encryptedJsonLogsPath: string = ""
-	private db: Database.Database | null = null
+	private db: Low<DatabaseSchema> | null = null
 	private saveLogToServerJobInterval?: NodeJS.Timeout
+	private cacheCleanupJobInterval?: NodeJS.Timeout
 	private latestUserLogMessage: LogMessageRequest | null = null
 
 	// Default log directory name in user's home directory
@@ -76,6 +97,8 @@ export class MsLogger {
 	private static readonly ENCRYPTION_KEY = "your-32-byte-secure-encryption-k" // Replace with a real key
 	// Default interval for the save log to server job (5 minutes)
 	private static readonly DEFAULT_SYNC_INTERVAL_MS = 5 * 60 * 1000
+	// Default interval for the cache cleanup job (30 minutes)
+	private static readonly DEFAULT_CACHE_CLEANUP_INTERVAL_MS = 30 * 60 * 1000
 
 	constructor({ logApiUrl, userInfo }: MsLoggerConfig) {
 		this.httpClient = axios.create(
@@ -92,54 +115,44 @@ export class MsLogger {
 
 		// Set up database path and initialize it
 		this.setDbFilePath()
-		// this.initializeDatabase()
+		this.initializeDatabase()
 	}
 
 	/**
-	 * Initializes the SQLite database, creating tables and indexes if needed
+	 * Initializes the LowDB database, creating structure if needed
 	 */
-	private initializeDatabase(): void {
+	private async initializeDatabase() {
 		try {
 			// Create directory if it doesn't exist
 			if (!fs.existsSync(this.logsPath)) {
 				fs.mkdirSync(this.logsPath, { recursive: true })
 			}
 
-			// Initialize the database
-			this.db = new Database(this.dbFilePath, { verbose: process.env.NODE_ENV === "development" ? console.log : undefined })
+			// Initialize LowDB with JSON file adapter
+			try {
+				const adapter = new JSONFile<DatabaseSchema>(this.dbFilePath)
+				this.db = new Low(adapter, { log_messages: [], user_message_cache: [], failed_logs: [] })
+				await this.db.read()
+				Logger.log("LowDB database opened successfully")
+			} catch (err) {
+				Logger.log("Error opening database: " + JSON.stringify(err))
+				console.error("Error opening database:", err)
+				return
+			}
 
-			// Create tables if they don't exist
-			this.db.exec(`
-        CREATE TABLE IF NOT EXISTS log_messages (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          userId INTEGER,
-          createdDate TEXT,
-          request TEXT,
-          response TEXT, 
-          inputTokenCount INTEGER,
-          outputTokenCount INTEGER,
-          maxInputTokens INTEGER,
-          modelName TEXT,
-          vendorName TEXT, 
-          modelId TEXT,
-          modelFamily TEXT,
-          modelVersion TEXT,
-          taskId TEXT,
-          state INTEGER,
-          mode TEXT,
-          logDate TEXT,
-          logTraceId TEXT
-        );
-        
-        CREATE INDEX IF NOT EXISTS idx_log_trace_id ON log_messages(logTraceId);
-        CREATE INDEX IF NOT EXISTS idx_task_id ON log_messages(taskId);
-      `)
+			// Initialize default data if file is empty
+			if (!this.db.data) {
+				this.db.data = { log_messages: [], user_message_cache: [], failed_logs: [] }
+				await this.db.write()
+			}
 
-			Logger.log(`SQLite database initialized at ${this.dbFilePath}`)
+			// Clean up old cache entries after database initialization
+			await this.cleanupOldCacheEntries()
+			Logger.log(`LowDB database initialized at ${this.dbFilePath}`)
 		} catch (error) {
-			Logger.log("Error initializing SQLite database: " + JSON.stringify(error))
-			vscode.window.showErrorMessage("Lỗi khởi tạo cơ sở dữ liệu SQLite vui lòng liên hệ với TeamAI hoặc GĐTC.")
-			console.error("Error initializing SQLite database:", error)
+			Logger.log("Error initializing LowDB database: " + JSON.stringify(error))
+			vscode.window.showErrorMessage("Lỗi khởi tạo cơ sở dữ liệu LowDB vui lòng liên hệ với TeamAI hoặc GĐTC.")
+			console.error("Error initializing LowDB database:", error)
 		}
 	}
 
@@ -149,7 +162,7 @@ export class MsLogger {
 	private closeDatabase(): void {
 		if (this.db) {
 			try {
-				this.db.close()
+				// LowDB doesn't need explicit closing, just nullify the reference
 				this.db = null
 				Logger.log("Database connection closed")
 			} catch (error) {
@@ -162,6 +175,7 @@ export class MsLogger {
 	initialized() {
 		// Initialize the logger here if needed
 		this.createSaveLogToServerJob()
+		this.createCacheCleanupJob()
 	}
 
 	setTaskId(taskId: string) {
@@ -176,10 +190,11 @@ export class MsLogger {
 		if (!MsLogger.instance) {
 			const userInfo = await getUserInfo()
 			MsLogger.instance = new MsLogger({
-				logApiUrl: "http://aiagentmonitor-rd.misa.local/api/business/LogMessages",
+				logApiUrl: "https://aiagentmonitor.misa.local/api/business/LogMessages",
 				userInfo: userInfo,
 			})
 		}
+		Logger.log("MsLogger instance created or retrieved successfully")
 		return MsLogger.instance
 	}
 
@@ -218,12 +233,205 @@ export class MsLogger {
 			} as LogMessage
 			const param = [request]
 			const res = await this.httpClient.post("/save-multi", param)
+
+			// After successful server save, save to cache if messageType = 1
+			if (message.messageType === MessageType.User && message.userPrompt && request.taskId) {
+				await this.saveUserMessageToCache(request.taskId, message.userPrompt)
+			}
 		} catch (error) {
 			Logger.log("Error saving log: " + JSON.stringify(error))
-			// save encrypted log to local
-			await this.encryptAndSaveLog(message) // Pass the original message
+			// Save failed log to local database with checksum for validation
+			await this.saveFailedLogToLocalDb(message)
+			// save encrypted log to local (keep existing backup)
+			await this.encryptAndSaveLog(message)
 			// vscode.window.showErrorMessage("Lỗi ghi log vui lòng liên hệ với TeamAI hoặc GĐTC.")
 			console.error("Error saving log:", error)
+		}
+	}
+
+	/**
+	 * Saves user message to cache table for duplicate detection
+	 * @param taskId The task ID
+	 * @param userPrompt The user prompt text
+	 */
+	private async saveUserMessageToCache(taskId: string, userPrompt: string): Promise<void> {
+		if (!this.db || !this.db.data) {
+			Logger.log("Database not initialized, cannot save to cache")
+			return
+		}
+
+		try {
+			await this.db.read()
+
+			// Check if entry already exists (LowDB equivalent of INSERT OR IGNORE)
+			const existingEntry = this.db.data.user_message_cache.find(
+				(entry) => entry.taskId === taskId && entry.userPrompt === userPrompt,
+			)
+
+			if (!existingEntry) {
+				// Generate next ID
+				const maxId =
+					this.db.data.user_message_cache.length > 0
+						? Math.max(...this.db.data.user_message_cache.map((entry) => entry.id))
+						: 0
+
+				this.db.data.user_message_cache.push({
+					id: maxId + 1,
+					taskId,
+					userPrompt,
+					createdDate: new Date().toISOString(),
+				})
+
+				await this.db.write()
+				Logger.log(`User message cached for duplicate detection: taskId=${taskId}`)
+			}
+		} catch (err) {
+			Logger.log("Error saving user message to cache: " + JSON.stringify(err))
+			console.error("Error saving user message to cache:", err)
+			throw err
+		}
+	}
+
+	/**
+	 * Checks if a user message already exists in the cache
+	 * @param taskId The task ID
+	 * @param userPrompt The user prompt text
+	 * @returns True if duplicate found, false otherwise
+	 */
+	private async isDuplicatedLogMessageFromCache(taskId: string, userPrompt: string): Promise<boolean> {
+		if (!this.db || !this.db.data) {
+			return Promise.resolve(false)
+		}
+
+		try {
+			await this.db.read()
+			const exists = this.db.data.user_message_cache.some(
+				(entry) => entry.taskId === taskId && entry.userPrompt === userPrompt,
+			)
+			return Promise.resolve(exists)
+		} catch (err) {
+			// Logger.log("Error checking cache for duplicate: " + JSON.stringify(err))
+			console.error("Error checking cache for duplicate:", err)
+			return Promise.resolve(false)
+		}
+	}
+
+	/**
+	 * Generates a checksum for log validation
+	 * @param message Log message to generate checksum for
+	 * @returns SHA256 hash string
+	 */
+	private generateLogChecksum(message: LogMessageRequest): string {
+		try {
+			// Create a hash of critical fields to detect tampering
+			const criticalFields = [
+				message.request,
+				message.response,
+				message.inputTokenCount?.toString() || "0",
+				message.outputTokenCount?.toString() || "0",
+				message.modelName || "",
+				message.modelId || "",
+				message.taskId || "",
+				message.userPrompt || "",
+			].join("|")
+			return createHash("sha256").update(criticalFields).digest("hex")
+		} catch (error) {
+			Logger.log("Error generating log checksum: " + JSON.stringify(error))
+			return ""
+		}
+	}
+
+	/**
+	 * Saves a failed log to the local database with checksum for validation
+	 * @param message The log message that failed to send to server
+	 */
+	private async saveFailedLogToLocalDb(message: LogMessageRequest): Promise<void> {
+		if (!this.db || !this.db.data) {
+			Logger.log("Database not initialized, cannot save failed log")
+			return
+		}
+
+		try {
+			await this.db.read()
+
+			// Generate checksum for validation
+			const checksum = this.generateLogChecksum(message)
+
+			// Use logTraceId as identifier, generate one if not present
+			const traceId = message.logTraceId || randomUUID()
+
+			// Format failed log message
+			const failedLogMessage: FailedLogMessage = {
+				id: 0, // Keep id field for compatibility but use logTraceId as primary identifier
+				...message,
+				userId: this.userInfo?.userId || 0,
+				createdDate: new Date(),
+				logDate: new Date(),
+				logTraceId: traceId,
+				state: 1,
+				taskId: message.taskId ?? this.taskId,
+				mode: this.mode,
+				checksum: checksum,
+				failedAt: new Date(),
+				retryCount: 0,
+			}
+
+			// Add to failed_logs table
+			this.db.data.failed_logs.push(failedLogMessage)
+			await this.db.write()
+
+			Logger.log(`Failed log saved to database with logTraceId ${traceId} and checksum ${checksum.substring(0, 8)}...`)
+		} catch (err) {
+			Logger.log("Error saving failed log to database: " + JSON.stringify(err))
+			console.error("Error saving failed log to database:", err)
+		}
+	}
+
+	/**
+	 * Validates a log by comparing its current checksum with stored checksum
+	 * @param log The failed log to validate
+	 * @returns True if log is valid, false if tampered
+	 */
+	private validateLogChecksum(log: FailedLogMessage): boolean {
+		try {
+			const currentChecksum = this.generateLogChecksum(log)
+			const isValid = currentChecksum === log.checksum
+			if (!isValid) {
+				Logger.log(
+					`Log validation failed: stored=${log.checksum.substring(0, 8)}..., current=${currentChecksum.substring(0, 8)}...`,
+				)
+			}
+			return isValid
+		} catch (error) {
+			Logger.log("Error validating log checksum: " + JSON.stringify(error))
+			return false
+		}
+	}
+
+	/**
+	 * Cleans up cache entries older than 1 day
+	 */
+	private async cleanupOldCacheEntries(): Promise<void> {
+		if (!this.db || !this.db.data) {
+			return
+		}
+
+		try {
+			await this.db.read()
+			const threeDayAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+			const initialCount = this.db.data.user_message_cache.length
+
+			// Filter out old entries
+			this.db.data.user_message_cache = this.db.data.user_message_cache.filter((entry) => entry.createdDate >= threeDayAgo)
+
+			const removedCount = initialCount - this.db.data.user_message_cache.length
+			if (removedCount > 0) {
+				await this.db.write()
+				Logger.log(`Cleaned up ${removedCount} old cache entries`)
+			}
+		} catch (err) {
+			Logger.log("Error cleaning up old cache entries: " + JSON.stringify(err))
+			console.error("Error cleaning up old cache entries:", err)
 		}
 	}
 
@@ -431,70 +639,74 @@ export class MsLogger {
 
 	async deleteSqliteLogsByTraceId(logTraceIds: string[]): Promise<number> {
 		// If no trace IDs provided or database not initialized, do nothing
-		if (!logTraceIds.length || !this.db) {
+		if (!logTraceIds.length || !this.db || !this.db.data) {
 			return 0
 		}
 
 		try {
-			const placeholders = logTraceIds.map(() => "?").join(",")
-			const stmt = this.db.prepare(`DELETE FROM log_messages WHERE logTraceId IN (${placeholders})`)
-			const info = stmt.run(logTraceIds)
+			await this.db.read()
+			const initialCount = this.db.data.log_messages.length
 
-			Logger.log(`Deleted ${info.changes} logs with matching trace IDs`)
-			return info.changes
-		} catch (error) {
-			Logger.log("Error deleting logs by trace ID: " + JSON.stringify(error))
-			console.error("Error deleting logs by trace ID:", error)
+			// Filter out logs with matching trace IDs
+			this.db.data.log_messages = this.db.data.log_messages.filter((log) => !logTraceIds.includes(log.logTraceId || ""))
+
+			const deletedCount = initialCount - this.db.data.log_messages.length
+			if (deletedCount > 0) {
+				await this.db.write()
+			}
+
+			Logger.log(`Deleted ${deletedCount} logs with matching trace IDs`)
+			return deletedCount
+		} catch (err) {
+			Logger.log("Error deleting logs by trace ID: " + JSON.stringify(err))
+			console.error("Error deleting logs by trace ID:", err)
 			return -1
 		}
 	}
 
 	/**
-	 * Saves log message to the SQLite database
+	 * Saves log message to the LowDB database
 	 * @param message Log message request to save
 	 */
 	async saveLogToSqlite(message: LogMessageRequest): Promise<void> {
-		if (!this.db) {
+		if (!this.db || !this.db.data) {
 			// Re-initialize database if it's not available
-			this.initializeDatabase()
-			if (!this.db) {
+			await this.initializeDatabase()
+			if (!this.db || !this.db.data) {
 				Logger.log("Failed to initialize database, cannot save log")
 				return
 			}
 		}
 
 		try {
+			await this.db.read()
+
+			// Use logTraceId as identifier, generate one if not present
+			const traceId = message.logTraceId || randomUUID()
+
 			// Format log message with user info and metadata
-			const logMessage = {
+			const logMessage: LogMessage = {
+				id: 0, // Keep id field for compatibility but use logTraceId as primary identifier
 				...message,
 				userId: this.userInfo?.userId || 0,
-				createdDate: new Date().toISOString(),
-				logDate: new Date().toISOString(),
-				logTraceId: message.logTraceId || randomUUID(),
+				createdDate: new Date() as any,
+				logDate: new Date() as any,
+				logTraceId: traceId,
 				state: 1,
 				taskId: message.taskId ?? this.taskId,
 				mode: this.mode,
 			}
 
-			// Insert log into database
-			const stmt = this.db.prepare(`
-        INSERT INTO log_messages (
-          userId, createdDate, request, response, inputTokenCount, outputTokenCount,
-          maxInputTokens, modelName, vendorName, modelId, modelFamily, modelVersion,
-          taskId, state, mode, logDate, logTraceId
-        ) VALUES (
-          @userId, @createdDate, @request, @response, @inputTokenCount, @outputTokenCount,
-          @maxInputTokens, @modelName, @vendorName, @modelId, @modelFamily, @modelVersion,
-          @taskId, @state, @mode, @logDate, @logTraceId
-        )
-      `)
+			// Add to database
+			this.db.data.log_messages.push(logMessage)
+			await this.db.write()
 
-			const info = stmt.run(logMessage)
-			Logger.log(`Log saved to database with ID ${info.lastInsertRowid}`)
-		} catch (error) {
-			Logger.log("Error saving log to database: " + JSON.stringify(error))
+			Logger.log(`Log saved to database with logTraceId ${traceId}`)
+		} catch (err) {
+			Logger.log("Error saving log to database: " + JSON.stringify(err))
 			vscode.window.showErrorMessage("Lỗi ghi log vào cơ sở dữ liệu vui lòng liên hệ với TeamAI hoặc GĐTC.")
-			console.error("Error saving log to database:", error)
+			console.error("Error saving log to database:", err)
+			throw err
 		}
 	}
 
@@ -558,11 +770,45 @@ export class MsLogger {
 		}
 	}
 
+	/**
+	 * Creates and starts a dedicated job that periodically cleans up old cache entries
+	 * @param intervalMs Optional interval in milliseconds (default is 30 minutes)
+	 */
+	createCacheCleanupJob(intervalMs?: number): void {
+		// Clear any existing cleanup job
+		this.stopCacheCleanupJob()
+
+		// Set up new interval for cache cleanup
+		const interval = intervalMs || MsLogger.DEFAULT_CACHE_CLEANUP_INTERVAL_MS
+		this.cacheCleanupJobInterval = setInterval(async () => {
+			try {
+				this.cleanupOldCacheEntries()
+			} catch (error) {
+				Logger.log("Error in cache cleanup job: " + JSON.stringify(error))
+				console.error("Error in cache cleanup job:", error)
+			}
+		}, interval)
+
+		Logger.log(`Cache cleanup job started with interval of ${interval}ms`)
+	}
+
+	/**
+	 * Stops the cache cleanup job if it's running
+	 */
+	stopCacheCleanupJob(): void {
+		if (this.cacheCleanupJobInterval) {
+			clearInterval(this.cacheCleanupJobInterval)
+			this.cacheCleanupJobInterval = undefined
+			Logger.log("Cache cleanup job stopped")
+		}
+	}
+
 	async syncLogsToServer(): Promise<number> {
-		// const sqliteSyncCount = await this.syncSqliteLogsToServer()
-		const jsonSyncCount = await this.syncJsonLogsToServer()
-		// return sqliteSyncCount + jsonSyncCount
-		return jsonSyncCount
+		const regularSyncCount = await this.syncSqliteLogsToServer()
+		const failedSyncCount = await this.syncFailedLogsToServer()
+		// const jsonSyncCount = await this.syncJsonLogsToServer()
+		// return regularSyncCount + failedSyncCount + jsonSyncCount
+		return regularSyncCount + failedSyncCount
 	}
 
 	/**
@@ -572,14 +818,15 @@ export class MsLogger {
 	 */
 	async syncSqliteLogsToServer(): Promise<number> {
 		// If database not initialized, do nothing
-		if (!this.db) {
+		if (!this.db || !this.db.data) {
 			return 0
 		}
 
 		try {
-			// Get all logs from database
-			const stmt = this.db.prepare("SELECT * FROM log_messages LIMIT 1000")
-			const logs = stmt.all() as LogMessageRequest[]
+			await this.db.read()
+
+			// Get logs from database (limit 1000)
+			const logs = this.db.data.log_messages.slice(0, 1000) as LogMessage[]
 
 			if (!logs || logs.length === 0) {
 				return 0
@@ -587,7 +834,7 @@ export class MsLogger {
 
 			// Process logs in batches of 50 to avoid sending too many at once
 			const batchSize = 50
-			const batches: LogMessageRequest[][] = []
+			const batches: LogMessage[][] = []
 
 			// Split logs into batches
 			for (let i = 0; i < logs.length; i += batchSize) {
@@ -639,6 +886,177 @@ export class MsLogger {
 	}
 
 	/**
+	 * Reads failed logs from the database, validates them, and sends valid ones to the server
+	 * Successfully sent logs are removed from the failed_logs table
+	 * @returns Promise resolving to the number of logs sent, or -1 if an error occurred
+	 */
+	async syncFailedLogsToServer(): Promise<number> {
+		// If database not initialized, do nothing
+		if (!this.db || !this.db.data) {
+			return 0
+		}
+
+		try {
+			await this.db.read()
+
+			// Get failed logs from database (limit 500)
+			const failedLogs = this.db.data.failed_logs.slice(0, 500) as FailedLogMessage[]
+
+			if (!failedLogs || failedLogs.length === 0) {
+				return 0
+			}
+
+			// Process logs in batches of 25 to avoid sending too many at once
+			const batchSize = 25
+			const batches: FailedLogMessage[][] = []
+
+			// Split logs into batches
+			for (let i = 0; i < failedLogs.length; i += batchSize) {
+				batches.push(failedLogs.slice(i, i + batchSize))
+			}
+
+			let totalSent = 0
+			const successfulLogTraceIds: string[] = []
+			const failedLogTraceIds: string[] = []
+			const maxRetryCount = 3
+
+			// Process each batch
+			for (const batch of batches) {
+				// Filter valid logs only
+				const validLogs = batch.filter((log) => {
+					// Skip logs that have exceeded retry count
+					if ((log.retryCount || 0) >= maxRetryCount) {
+						if (log.logTraceId) failedLogTraceIds.push(log.logTraceId)
+						Logger.log(`Skipping log ${log.logTraceId} - exceeded retry count ${maxRetryCount}`)
+						return false
+					}
+					// Validate checksum
+					const isValid = this.validateLogChecksum(log)
+					if (!isValid) {
+						if (log.logTraceId) {
+							failedLogTraceIds.push(log.logTraceId)
+						}
+						Logger.log(`Skipping log ${log.logTraceId} - checksum validation failed`)
+						return false
+					}
+					return true
+				})
+
+				if (validLogs.length === 0) {
+					continue
+				}
+
+				try {
+					// Prepare batch for server (remove failed log specific fields)
+					const request = validLogs.map((log) => ({
+						...log,
+						createdDate: new Date(log.logDate || new Date()),
+						// Remove failed log specific fields
+						checksum: undefined,
+						failedAt: undefined,
+						retryCount: undefined,
+					})) as LogMessage[]
+
+					// Send batch to server
+					const res = await this.saveLogBulk(request)
+					totalSent += validLogs.length
+
+					// Collect trace IDs for successful logs
+					validLogs.forEach((log) => {
+						if (log.logTraceId) {
+							successfulLogTraceIds.push(log.logTraceId)
+						}
+					})
+
+					Logger.log(`Sent batch of ${validLogs.length} failed logs to server`)
+				} catch (batchError) {
+					Logger.log("Error sending failed log batch to server: " + JSON.stringify(batchError))
+					console.error("Error sending failed log batch to server:", batchError)
+					// Update retry count for failed logs
+					batch.forEach((log) => {
+						const currentRetryCount = (log.retryCount || 0) + 1
+						if (currentRetryCount < maxRetryCount && log.logTraceId) {
+							// Update retry count in database
+							this.updateFailedLogRetryCount(log.logTraceId, currentRetryCount)
+						} else if (log.logTraceId) {
+							failedLogTraceIds.push(log.logTraceId)
+						}
+					})
+				}
+			}
+
+			// Remove successfully sent logs and logs that exceeded retry count
+			if (successfulLogTraceIds.length > 0 || failedLogTraceIds.length > 0) {
+				await this.deleteFailedLogsByTraceIds([...successfulLogTraceIds, ...failedLogTraceIds])
+			}
+
+			Logger.log(
+				`Synced ${totalSent} failed logs to server, removed ${successfulLogTraceIds.length + failedLogTraceIds.length} logs from failed_logs table`,
+			)
+			return totalSent
+		} catch (error) {
+			Logger.log("Error syncing failed logs to server: " + JSON.stringify(error))
+			console.error("Error syncing failed logs to server:", error)
+			return -1
+		}
+	}
+
+	/**
+	 * Updates the retry count for a failed log
+	 * @param logTraceId The logTraceId of the failed log
+	 * @param retryCount The new retry count
+	 */
+	private async updateFailedLogRetryCount(logTraceId: string, retryCount: number): Promise<void> {
+		if (!this.db || !this.db.data) {
+			return
+		}
+
+		try {
+			await this.db.read()
+			const log = this.db.data.failed_logs.find((l) => l.logTraceId === logTraceId)
+			if (log) {
+				log.retryCount = retryCount
+				await this.db.write()
+				Logger.log(`Updated retry count for failed log ${logTraceId} to ${retryCount}`)
+			}
+		} catch (err) {
+			Logger.log("Error updating failed log retry count: " + JSON.stringify(err))
+			console.error("Error updating failed log retry count:", err)
+		}
+	}
+
+	/**
+	 * Deletes failed logs by their logTraceIds
+	 * @param logTraceIds Array of logTraceIds to delete
+	 * @returns Promise resolving to the number of logs deleted
+	 */
+	private async deleteFailedLogsByTraceIds(logTraceIds: string[]): Promise<number> {
+		if (!this.db || !this.db.data || logTraceIds.length === 0) {
+			return 0
+		}
+
+		try {
+			await this.db.read()
+			const initialCount = this.db.data.failed_logs.length
+
+			// Filter out logs with matching trace IDs
+			this.db.data.failed_logs = this.db.data.failed_logs.filter((log) => !logTraceIds.includes(log.logTraceId || ""))
+
+			const deletedCount = initialCount - this.db.data.failed_logs.length
+			if (deletedCount > 0) {
+				await this.db.write()
+			}
+
+			Logger.log(`Deleted ${deletedCount} failed logs from database`)
+			return deletedCount
+		} catch (err) {
+			Logger.log("Error deleting failed logs by trace IDs: " + JSON.stringify(err))
+			console.error("Error deleting failed logs by trace IDs:", err)
+			return 0
+		}
+	}
+
+	/**
 	 * Saves log message to JSON file organized by minute
 	 * @param message Log message request to save
 	 */
@@ -670,17 +1088,17 @@ export class MsLogger {
 				}
 			}
 
-			// Calculate next ID
-			const nextId = logs.length > 0 ? Math.max(...logs.map((log) => log.id)) + 1 : 1
+			// Use logTraceId as identifier, generate one if not present
+			const traceId = message.logTraceId || randomUUID()
 
-			// Format log message with user info and metadata including ID
+			// Format log message with user info and metadata
 			const logMessage: LogMessage = {
-				id: nextId,
+				id: 0, // Keep id field for compatibility but use logTraceId as primary identifier
 				...message,
 				userId: this.userInfo?.userId || 0,
 				createdDate: new Date().toISOString() as any, // Type conversion needed due to Date vs string
 				logDate: new Date().toISOString() as any,
-				logTraceId: message.logTraceId || randomUUID(),
+				logTraceId: traceId,
 				state: 1,
 				taskId: message.taskId ?? this.taskId,
 				mode: this.mode,
@@ -691,7 +1109,7 @@ export class MsLogger {
 
 			// Write to file
 			fs.writeFileSync(filePath, JSON.stringify(logs, null, 2))
-			Logger.log(`Log saved to JSON file: ${filePath}`)
+			Logger.log(`Log saved to JSON file with logTraceId ${traceId}: ${filePath}`)
 		} catch (error) {
 			Logger.log("Error saving log to JSON file: " + JSON.stringify(error))
 			vscode.window.showErrorMessage("Lỗi ghi log vào file JSON vui lòng liên hệ với TeamAI hoặc GĐTC.")
@@ -868,9 +1286,10 @@ export class MsLogger {
 	}
 
 	public static async deactivate() {
-		// Stop the save log to server job if it's running and close database
+		// Stop both jobs if they're running and close database
 		this.getInstance().then((instance) => {
 			instance.stopSaveLogToServerJob()
+			instance.stopCacheCleanupJob()
 			instance.closeDatabase()
 		})
 		Logger.log("MsLogger deactivated")
@@ -932,7 +1351,10 @@ export class MsLogger {
 		return extractedContent
 	}
 
-	public createUserLogMessage(logMessage: LogMessageRequest, cleanedMessages: { content: any; role: "user" | "assistant" }[]) {
+	public async createUserLogMessage(
+		logMessage: LogMessageRequest,
+		cleanedMessages: { content: any; role: "user" | "assistant" }[],
+	): Promise<LogMessageRequest> {
 		let request = findLast(
 			cleanedMessages,
 			(msg) =>
@@ -945,7 +1367,7 @@ export class MsLogger {
 						content.text.includes("</answer>"),
 				),
 		)
-		if (!request || this.isDuplicatedLogMessage(request)) {
+		if (!request || (await this.isDuplicatedLogMessage(request))) {
 			request = cleanedMessages[cleanedMessages.length - 1]
 		}
 		const result = {
@@ -955,7 +1377,10 @@ export class MsLogger {
 
 		return result
 	}
-	public createUserLogMessageGemini(logMessage: LogMessageRequest, cleanedMessages: Content[]) {
+	public async createUserLogMessageGemini(
+		logMessage: LogMessageRequest,
+		cleanedMessages: Content[],
+	): Promise<LogMessageRequest> {
 		let request = findLast(
 			cleanedMessages,
 			(msg) =>
@@ -968,7 +1393,7 @@ export class MsLogger {
 						content.text.includes("</answer>"),
 				),
 		)
-		if (!request || this.isDuplicatedLogMessage(request as any)) {
+		if (!request || (await this.isDuplicatedLogMessageGemini(request))) {
 			request = cleanedMessages[cleanedMessages.length - 1]
 		}
 		const result = {
@@ -1002,24 +1427,89 @@ export class MsLogger {
 	// 	return logMessages !== -1
 	// }
 
-	isDuplicatedLogMessage(request: MessageRequest) {
-		if (this.taskId === this.latestUserLogMessage?.taskId) {
-			const index = request.content.findIndex((content) => {
-				let currentUserPrompt = this.extractUserMessage(content.text ?? "")
-				return this.latestUserLogMessage?.userPrompt === currentUserPrompt
-			})
-			return index !== -1
+	async isDuplicatedLogMessage(request: MessageRequest): Promise<boolean> {
+		// Extract user prompt from the request
+		const userPrompt = this.extractUserMessageFromRequest(request)
+		if (!userPrompt || !this.taskId) {
+			return false
 		}
+
+		// OPTIMIZED: Check in-memory cache first (fastest)
+		if (this.latestUserLogMessage && this.taskId === this.latestUserLogMessage?.taskId) {
+			// Check if the current user prompt matches the latest cached user prompt
+			if (this.latestUserLogMessage.userPrompt === userPrompt) {
+				return true
+			}
+		}
+
+		// Fallback to database cache check (slower, only if not found in memory)
+		const isDuplicateInCache = await this.isDuplicatedLogMessageFromCache(this.taskId, userPrompt)
+		if (isDuplicateInCache) {
+			return true
+		}
+
 		return false
 	}
-	isDuplicatedLogMessageGemini(request: Content) {
-		if (this.taskId === this.latestUserLogMessage?.taskId) {
-			const index = request?.parts?.findIndex((content) => {
-				let currentUserPrompt = this.extractUserMessage(content.text ?? "")
-				return this.latestUserLogMessage?.userPrompt === currentUserPrompt
-			})
-			return index !== -1
+
+	/**
+	 * Extracts user prompt from a MessageRequest for duplicate checking
+	 * @param request The MessageRequest to extract prompt from
+	 * @returns The extracted user prompt or null if not found
+	 */
+	private extractUserMessageFromRequest(request: MessageRequest): string | null {
+		const userPrompt = request.content.find(
+			(content) =>
+				content.type === "text" &&
+				(content.text?.includes("</user_message>") ||
+					content.text?.includes("</task>") ||
+					content.text?.includes("</answer>") ||
+					content.text?.includes("</feedback>")),
+		)
+		if (userPrompt) {
+			return this.extractUserMessage(userPrompt.text)
 		}
+		return null
+	}
+	async isDuplicatedLogMessageGemini(request: Content): Promise<boolean> {
+		// Extract user prompt from the Gemini request
+		const userPrompt = this.extractUserMessageFromGeminiRequest(request)
+		if (!userPrompt || !this.taskId) {
+			return false
+		}
+
+		// OPTIMIZED: Check in-memory cache first (fastest)
+		if (this.latestUserLogMessage && this.taskId === this.latestUserLogMessage?.taskId) {
+			// Check if the current user prompt matches the latest cached user prompt
+			if (this.latestUserLogMessage.userPrompt === userPrompt) {
+				return true
+			}
+		}
+
+		// Fallback to database cache check (slower, only if not found in memory)
+		const isDuplicateInCache = await this.isDuplicatedLogMessageFromCache(this.taskId, userPrompt)
+		if (isDuplicateInCache) {
+			return true
+		}
+
 		return false
+	}
+
+	/**
+	 * Extracts user prompt from a Gemini Content request for duplicate checking
+	 * @param request The Gemini Content to extract prompt from
+	 * @returns The extracted user prompt or null if not found
+	 */
+	private extractUserMessageFromGeminiRequest(request: Content): string | null {
+		const userPrompt = request?.parts?.find(
+			(content) =>
+				content.text?.includes("</user_message>") ||
+				content.text?.includes("</task>") ||
+				content.text?.includes("</answer>") ||
+				content.text?.includes("</feedback>"),
+		)
+		if (userPrompt && userPrompt.text) {
+			return this.extractUserMessage(userPrompt.text)
+		}
+		return null
 	}
 }

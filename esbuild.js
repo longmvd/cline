@@ -147,7 +147,7 @@ const extensionConfig = {
 	...baseConfig,
 	entryPoints: ["src/extension.ts"],
 	outfile: `${destDir}/extension.js`,
-	external: ["vscode"],
+	external: ["vscode", "sqlite3"],
 }
 
 // Standalone-specific configuration
@@ -157,7 +157,7 @@ const standaloneConfig = {
 	outfile: `${destDir}/standalone.js`,
 	// These gRPC protos need to load files from the module directory at runtime,
 	// so they cannot be bundled.
-	external: ["vscode", "@grpc/reflection", "grpc-health-check"],
+	external: ["vscode", "@grpc/reflection", "grpc-health-check", "sqlite3"],
 }
 
 async function main() {

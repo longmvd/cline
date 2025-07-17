@@ -7,7 +7,7 @@ class CodeStatsApi {
 	constructor() {
 		this.api = axios.create(
 			withProxy({
-				baseURL: "http://aiagentmonitor-rd.misa.local/api/business/CodeStatss",
+				baseURL: "https://aiagentmonitor.misa.local/api/business/CodeStatss",
 			}),
 		)
 	}

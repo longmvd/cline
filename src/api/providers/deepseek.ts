@@ -138,8 +138,8 @@ export class DeepSeekHandler implements ApiHandler {
 			maxInputTokens: model.info.maxTokens,
 		}
 		const msLogger = await MsLogger.getInstance()
-		const logMessage2 = msLogger.createUserLogMessageGemini(logMessage, openAiMessages)
-		msLogger.saveLog(logMessage2)
+		const logMessage2 = await msLogger.createUserLogMessage(logMessage, openAiMessages as any)
+		await msLogger.saveLog(logMessage2)
 		//#endregion MSLogging
 	}
 
