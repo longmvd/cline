@@ -7,6 +7,7 @@ import { getLmStudioModels } from "./getLmStudioModels"
 import { getOllamaModels } from "./getOllamaModels"
 import { getVsCodeLmModels } from "./getVsCodeLmModels"
 import { refreshGroqModels } from "./refreshGroqModels"
+import { refreshHuggingFaceModels } from "./refreshHuggingFaceModels"
 import { refreshOpenAiModels } from "./refreshOpenAiModels"
 import { refreshOpenRouterModels } from "./refreshOpenRouterModels"
 import { refreshRequestyModels } from "./refreshRequestyModels"
@@ -25,6 +26,7 @@ export function registerAllMethods(): void {
 	registerMethod("getOllamaModels", getOllamaModels)
 	registerMethod("getVsCodeLmModels", getVsCodeLmModels)
 	registerMethod("refreshGroqModels", refreshGroqModels)
+	registerMethod("refreshHuggingFaceModels", refreshHuggingFaceModels)
 	registerMethod("refreshOpenAiModels", refreshOpenAiModels)
 	registerMethod("refreshOpenRouterModels", refreshOpenRouterModels)
 	registerMethod("refreshRequestyModels", refreshRequestyModels)

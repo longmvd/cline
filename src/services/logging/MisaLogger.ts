@@ -190,11 +190,11 @@ export class MsLogger {
 		if (!MsLogger.instance) {
 			const userInfo = await getUserInfo()
 			MsLogger.instance = new MsLogger({
-				logApiUrl: "https://aiagentmonitor.misa.local/api/business/LogMessages",
+				logApiUrl: "http://aiagentmonitor-rd.misa.local/api/business/LogMessages",
 				userInfo: userInfo,
 			})
+			MsLogger.instance.initialized()
 		}
-		Logger.log("MsLogger instance created or retrieved successfully")
 		return MsLogger.instance
 	}
 
@@ -409,29 +409,143 @@ export class MsLogger {
 	}
 
 	/**
-	 * Cleans up cache entries older than 1 day
+	 * Cleans up cache entries older than 3 days with robust error handling and retry logic
 	 */
 	private async cleanupOldCacheEntries(): Promise<void> {
 		if (!this.db || !this.db.data) {
 			return
 		}
 
-		try {
-			await this.db.read()
-			const threeDayAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
-			const initialCount = this.db.data.user_message_cache.length
+		const maxRetries = 3
+		const baseDelayMs = 1000
 
-			// Filter out old entries
-			this.db.data.user_message_cache = this.db.data.user_message_cache.filter((entry) => entry.createdDate >= threeDayAgo)
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			try {
+				await this.db.read()
+				const threeDayAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+				const initialCount = this.db.data.user_message_cache.length
 
-			const removedCount = initialCount - this.db.data.user_message_cache.length
-			if (removedCount > 0) {
-				await this.db.write()
-				Logger.log(`Cleaned up ${removedCount} old cache entries`)
+				// Filter out old entries
+				this.db.data.user_message_cache = this.db.data.user_message_cache.filter(
+					(entry) => entry.createdDate >= threeDayAgo,
+				)
+
+				const removedCount = initialCount - this.db.data.user_message_cache.length
+				if (removedCount > 0) {
+					// Use safe write with retry logic
+					await this.safeDbWrite()
+					Logger.log(`Cleaned up ${removedCount} old cache entries`)
+				}
+				return // Success, exit retry loop
+			} catch (err) {
+				const isLastAttempt = attempt === maxRetries
+				Logger.log(`Error cleaning up old cache entries (attempt ${attempt}/${maxRetries}): ${JSON.stringify(err)}`)
+
+				if (isLastAttempt) {
+					console.error("Error cleaning up old cache entries after all retries:", err)
+					// Don't throw - gracefully degrade
+					return
+				}
+
+				// Exponential backoff with jitter
+				const delayMs = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000
+				await new Promise((resolve) => setTimeout(resolve, delayMs))
 			}
-		} catch (err) {
-			Logger.log("Error cleaning up old cache entries: " + JSON.stringify(err))
-			console.error("Error cleaning up old cache entries:", err)
+		}
+	}
+
+	/**
+	 * Safe database write with Windows-specific error handling and retry logic
+	 */
+	private async safeDbWrite(maxRetries: number = 3): Promise<void> {
+		if (!this.db) {
+			throw new Error("Database not initialized")
+		}
+
+		const baseDelayMs = 500
+
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			try {
+				await this.db.write()
+				return // Success
+			} catch (error: any) {
+				const isLastAttempt = attempt === maxRetries
+				const isWindowsFileError = error?.code === "ENOENT" || error?.code === "EBUSY" || error?.code === "EPERM"
+
+				Logger.log(
+					`Database write attempt ${attempt}/${maxRetries} failed: ${JSON.stringify({
+						code: error?.code,
+						syscall: error?.syscall,
+						path: error?.path,
+						dest: error?.dest,
+					})}`,
+				)
+
+				if (isLastAttempt) {
+					if (isWindowsFileError) {
+						Logger.log("Windows file system error during database write - attempting fallback recovery")
+						await this.attemptDatabaseRecovery()
+						// Try one more time after recovery
+						try {
+							await this.db.write()
+							Logger.log("Database write successful after recovery")
+							return
+						} catch (recoveryError) {
+							Logger.log("Database write failed even after recovery: " + JSON.stringify(recoveryError))
+						}
+					}
+					throw error
+				}
+
+				// Exponential backoff with jitter for retry
+				const delayMs = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500
+				await new Promise((resolve) => setTimeout(resolve, delayMs))
+			}
+		}
+	}
+
+	/**
+	 * Attempts to recover from Windows file system errors
+	 */
+	private async attemptDatabaseRecovery(): Promise<void> {
+		try {
+			Logger.log("Attempting database recovery...")
+
+			// Check if database file exists and is accessible
+			if (!fs.existsSync(this.dbFilePath)) {
+				Logger.log("Database file missing during recovery - reinitializing")
+				await this.initializeDatabase()
+				return
+			}
+
+			// Try to read current data to validate file integrity
+			try {
+				const fileContent = fs.readFileSync(this.dbFilePath, "utf8")
+				JSON.parse(fileContent) // Validate JSON structure
+				Logger.log("Database file integrity check passed")
+			} catch (fileError) {
+				Logger.log("Database file corrupted - creating backup and reinitializing")
+
+				// Create backup of corrupted file
+				const backupPath = `${this.dbFilePath}.corrupted.${Date.now()}.backup`
+				try {
+					fs.copyFileSync(this.dbFilePath, backupPath)
+					Logger.log(`Corrupted database backed up to: ${backupPath}`)
+				} catch (backupError) {
+					Logger.log("Failed to create backup of corrupted database: " + JSON.stringify(backupError))
+				}
+
+				// Reinitialize with current data
+				if (this.db && this.db.data) {
+					const currentData = { ...this.db.data }
+					await this.initializeDatabase()
+					if (this.db && this.db.data) {
+						this.db.data = currentData
+					}
+				}
+			}
+		} catch (recoveryError) {
+			Logger.log("Database recovery failed: " + JSON.stringify(recoveryError))
 		}
 	}
 
@@ -634,10 +748,6 @@ export class MsLogger {
 	 * @returns Promise resolving to the number of logs deleted, or -1 if an error occurred
 	 */
 	async deleteLogsByTraceId(logTraceIds: string[]): Promise<number> {
-		return this.deleteSqliteLogsByTraceId(logTraceIds)
-	}
-
-	async deleteSqliteLogsByTraceId(logTraceIds: string[]): Promise<number> {
 		// If no trace IDs provided or database not initialized, do nothing
 		if (!logTraceIds.length || !this.db || !this.db.data) {
 			return 0
@@ -804,85 +914,9 @@ export class MsLogger {
 	}
 
 	async syncLogsToServer(): Promise<number> {
-		const regularSyncCount = await this.syncSqliteLogsToServer()
+		// Only sync failed logs since we're using LowDB for all operations
 		const failedSyncCount = await this.syncFailedLogsToServer()
-		// const jsonSyncCount = await this.syncJsonLogsToServer()
-		// return regularSyncCount + failedSyncCount + jsonSyncCount
-		return regularSyncCount + failedSyncCount
-	}
-
-	/**
-	 * Reads logs from the database and sends them to the server in a batch
-	 * Logs that are successfully sent are removed from the database
-	 * @returns Promise resolving to the number of logs sent, or -1 if an error occurred
-	 */
-	async syncSqliteLogsToServer(): Promise<number> {
-		// If database not initialized, do nothing
-		if (!this.db || !this.db.data) {
-			return 0
-		}
-
-		try {
-			await this.db.read()
-
-			// Get logs from database (limit 1000)
-			const logs = this.db.data.log_messages.slice(0, 1000) as LogMessage[]
-
-			if (!logs || logs.length === 0) {
-				return 0
-			}
-
-			// Process logs in batches of 50 to avoid sending too many at once
-			const batchSize = 50
-			const batches: LogMessage[][] = []
-
-			// Split logs into batches
-			for (let i = 0; i < logs.length; i += batchSize) {
-				batches.push(logs.slice(i, i + batchSize))
-			}
-
-			let totalSent = 0
-			const logTraceIds: string[] = []
-
-			// Process each batch
-			for (const batch of batches) {
-				try {
-					// Prepare batch for server
-					const request = batch.map((log) => ({
-						...log,
-						createdDate: new Date(log.logDate || new Date()),
-					})) as LogMessage[]
-
-					// Send batch to server
-					const res = await this.saveLogBulk(request)
-					totalSent += batch.length
-
-					// Collect trace IDs for deletion
-					batch.forEach((log) => {
-						if (log.logTraceId) {
-							logTraceIds.push(log.logTraceId)
-						}
-					})
-
-					Logger.log(`Sent batch of ${batch.length} logs to server`)
-				} catch (batchError) {
-					Logger.log("Error sending log batch to server: " + JSON.stringify(batchError))
-					console.error("Error sending log batch to server:", batchError)
-				}
-			}
-
-			// Delete the successfully sent logs
-			if (logTraceIds.length > 0) {
-				await this.deleteLogsByTraceId(logTraceIds)
-			}
-
-			Logger.log(`Synced ${totalSent} logs to server`)
-			return totalSent
-		} catch (error) {
-			Logger.log("Error syncing logs to server: " + JSON.stringify(error))
-			console.error("Error syncing logs to server:", error)
-			return -1
-		}
+		return failedSyncCount
 	}
 
 	/**
@@ -1379,23 +1413,27 @@ export class MsLogger {
 		logMessage: LogMessageRequest,
 		cleanedMessages: { content: any; role: "user" | "assistant" }[],
 	): Promise<LogMessageRequest> {
-		let request = findLast(
-			cleanedMessages,
-			(msg) =>
-				msg.role === "user" &&
-				(msg.content as { text: string; type: string }[])?.some(
-					(content) => content.type === "text" && this.hasUserMessageClosingTags(content.text),
-				),
-		)
-		if (!request || (await this.isDuplicatedLogMessage(request))) {
-			request = cleanedMessages[cleanedMessages.length - 1]
+		try {
+			let request = findLast(
+				cleanedMessages,
+				(msg) =>
+					msg.role === "user" &&
+					(msg.content as { text: string; type: string }[])?.some?.(
+						(content) => content.type === "text" && this.hasUserMessageClosingTags(content.text),
+					),
+			)
+			if (!request || (await this.isDuplicatedLogMessage(request))) {
+				request = cleanedMessages[cleanedMessages.length - 1]
+			}
+			const result = {
+				...logMessage,
+				request: JSON.stringify(request ?? cleanedMessages[cleanedMessages.length - 1]),
+			} as LogMessageRequest
+			return result
+		} catch (error) {
+			Logger.log("Error creating user log message: " + JSON.stringify(error) + " - " + JSON.stringify(logMessage))
+			return logMessage
 		}
-		const result = {
-			...logMessage,
-			request: JSON.stringify(request ?? cleanedMessages[cleanedMessages.length - 1]),
-		} as LogMessageRequest
-
-		return result
 	}
 	public async createUserLogMessageGemini(
 		logMessage: LogMessageRequest,
@@ -1405,7 +1443,7 @@ export class MsLogger {
 			cleanedMessages,
 			(msg) =>
 				msg.role === "user" &&
-				(msg.parts as { text: string }[])?.some((content) => this.hasUserMessageClosingTags(content.text)),
+				(msg.parts as { text: string }[])?.some?.((content) => this.hasUserMessageClosingTags(content.text)),
 		)
 		if (!request || (await this.isDuplicatedLogMessageGemini(request))) {
 			request = cleanedMessages[cleanedMessages.length - 1]
@@ -1471,7 +1509,7 @@ export class MsLogger {
 	 * @returns The extracted user prompt or null if not found
 	 */
 	private extractUserMessageFromRequest(request: MessageRequest): string | null {
-		const userPrompt = request.content.find(
+		const userPrompt = request?.content?.find?.(
 			(content) => content.type === "text" && this.hasUserMessageClosingTags(content.text),
 		)
 		if (userPrompt) {
@@ -1509,7 +1547,7 @@ export class MsLogger {
 	 * @returns The extracted user prompt or null if not found
 	 */
 	private extractUserMessageFromGeminiRequest(request: Content): string | null {
-		const userPrompt = request?.parts?.find((content) => this.hasUserMessageClosingTags(content.text))
+		const userPrompt = request?.parts?.find?.((content) => this.hasUserMessageClosingTags(content.text))
 		if (userPrompt && userPrompt.text) {
 			return this.extractUserMessage(userPrompt.text)
 		}
