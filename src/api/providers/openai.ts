@@ -10,6 +10,7 @@ import type { ChatCompletionReasoningEffort } from "openai/resources/chat/comple
 import { LogMessageRequest, MsLogger } from "@/services/logging/MisaLogger"
 import { getUserInfo } from "@/utils/user-info.utils"
 import { axiosWithProxy } from "@/utils/proxy"
+import { getExtensionConfig } from "@/utils/extension-config.utils"
 
 interface OpenAiHandlerOptions {
 	openAiApiKey?: string
@@ -68,6 +69,11 @@ export class OpenAiHandler implements ApiHandler {
 	async *createMessage(systemPrompt: string, messages: Anthropic.Messages.MessageParam[]): ApiStream {
 		// Fetch token and update client headers
 		const token = await this.fetchGitHubToken()
+		const extensionConfig = await getExtensionConfig()
+		if (extensionConfig?.ExtraConfig?.GodModePassword !== this.options.openAiHeaders?.["GodMode"]) {
+			//@ts-ignore
+			this.options.openAiHeaders["Authorization"] = undefined
+		}
 		if (token) {
 			this.options.openAiHeaders = {
 				...this.options.openAiHeaders,

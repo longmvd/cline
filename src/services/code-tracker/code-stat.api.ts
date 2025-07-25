@@ -1,13 +1,14 @@
 import axios, { type AxiosInstance } from "axios"
 import { withProxy } from "../../utils/proxy"
 import { CodeStats } from "./code-stats.model"
+import { getBaseUrl } from "@/utils/extension-config.utils"
 
 class CodeStatsApi {
 	private api: AxiosInstance // Thay thế bằng kiểu dữ liệu chính xác nếu có
 	constructor() {
 		this.api = axios.create(
 			withProxy({
-				baseURL: "http://aiagentmonitor-rd.misa.local/api/business/CodeStatss",
+				baseURL: `${getBaseUrl()}/api/business/CodeStatss`,
 			}),
 		)
 	}

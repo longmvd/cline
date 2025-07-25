@@ -3,8 +3,7 @@ import * as os from "os"
 import * as vscode from "vscode"
 import { Logger } from "../services/logging/Logger"
 import { axiosWithProxy } from "./proxy"
-import * as pkg from "../../package.json"
-export const EXTENSION_VERSION = pkg.version
+import { EXTENSION_VERSION, ExtensionConfig, getBaseUrl } from "./extension-config.utils"
 
 let userInfo: MsUserInfo = {
 	userId: undefined,
@@ -50,15 +49,6 @@ export interface MsUserInfo {
 	extensionVersion: string
 }
 
-export interface ExtensionConfig {
-	InActive: boolean
-	Version: string
-	InstallPath: string
-	ExtraConfig: {
-		[key: string]: any
-	}
-}
-
 export type RegisterUserInfoParams = {
 	onNeedToUpdate?: (params: { message: string; extensionConfig: ExtensionConfig }) => void
 }
@@ -78,7 +68,7 @@ export async function registerUserInfo({ onNeedToUpdate }: RegisterUserInfoParam
 			extensionVersion: EXTENSION_VERSION,
 		}
 		try {
-			const res = await axiosWithProxy.post("http://aiagentmonitor-rd.misa.local/api/business/UserInfos/register", userInfo)
+			const res = await axiosWithProxy.post(`${getBaseUrl()}/api/business/UserInfos/register`, userInfo)
 			if (res.status === 200) {
 				// const data = {
 				// 	IsSuccess: false,

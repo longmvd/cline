@@ -11,6 +11,7 @@ import { getUserInfo, MsUserInfo } from "./../../utils/user-info.utils"
 import { Logger } from "./Logger"
 import { findLast } from "@shared/array"
 import { Content } from "@google/genai"
+import { getBaseUrl } from "@/utils/extension-config.utils"
 
 export interface LogMessage {
 	id: number
@@ -190,7 +191,7 @@ export class MsLogger {
 		if (!MsLogger.instance) {
 			const userInfo = await getUserInfo()
 			MsLogger.instance = new MsLogger({
-				logApiUrl: "http://aiagentmonitor-rd.misa.local/api/business/LogMessages",
+				logApiUrl: `${getBaseUrl()}/api/business/LogMessages`,
 				userInfo: userInfo,
 			})
 			MsLogger.instance.initialized()
