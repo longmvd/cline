@@ -38,7 +38,7 @@ import pWaitFor from "p-wait-for"
 import * as path from "path"
 import * as vscode from "vscode"
 
-import { createDiffViewProvider } from "@/hosts/host-providers"
+import { HostProvider } from "@/hosts/host-provider"
 import { ClineErrorType } from "@/services/error/ClineError"
 import { ErrorService } from "@/services/error/ErrorService"
 import { parseAssistantMessageV2, parseAssistantMessageV3, ToolUseName } from "@core/assistant-message"
@@ -87,6 +87,7 @@ import { MessageStateHandler } from "./message-state"
 import { TaskState } from "./TaskState"
 import { ToolExecutor } from "./ToolExecutor"
 import { updateApiReqMsg } from "./utils"
+
 export const USE_EXPERIMENTAL_CLAUDE4_FEATURES = false
 
 export type ToolResponse = string | Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>
@@ -189,7 +190,7 @@ export class Task {
 		this.urlContentFetcher = new UrlContentFetcher(context)
 		this.browserSession = new BrowserSession(context, browserSettings)
 		this.contextManager = new ContextManager()
-		this.diffViewProvider = createDiffViewProvider()
+		this.diffViewProvider = HostProvider.get().createDiffViewProvider()
 		this.autoApprovalSettings = autoApprovalSettings
 		this.browserSettings = browserSettings
 		this.chatSettings = chatSettings
@@ -2531,10 +2532,9 @@ export class Task {
 
 		// It could be useful for cline to know if the user went from one or no file to another between messages, so we always include this context
 		details += "\n\n# VSCode Visible Files"
-		const visibleFilePaths = vscode.window.visibleTextEditors
-			?.map((editor) => editor.document?.uri?.fsPath)
-			.filter(Boolean)
-			.map((absolutePath) => path.relative(this.cwd, absolutePath))
+		const visibleFilePaths = (await HostProvider.window.getVisibleTabs({})).paths.map((absolutePath) =>
+			path.relative(this.cwd, absolutePath),
+		)
 
 		// Filter paths through clineIgnoreController
 		const allowedVisibleFiles = this.clineIgnoreController
@@ -2549,11 +2549,9 @@ export class Task {
 		}
 
 		details += "\n\n# VSCode Open Tabs"
-		const openTabPaths = vscode.window.tabGroups.all
-			.flatMap((group) => group.tabs)
-			.map((tab) => (tab.input as vscode.TabInputText)?.uri?.fsPath)
-			.filter(Boolean)
-			.map((absolutePath) => path.relative(this.cwd, absolutePath))
+		const openTabPaths = (await HostProvider.window.getOpenTabs({})).paths.map((absolutePath) =>
+			path.relative(this.cwd, absolutePath),
+		)
 
 		// Filter paths through clineIgnoreController
 		const allowedOpenTabs = this.clineIgnoreController
