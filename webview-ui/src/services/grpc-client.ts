@@ -200,7 +200,7 @@ export class StateServiceClient extends ProtoBusClient {
     static async getLatestState(request: proto.cline.EmptyRequest): Promise<proto.cline.State> {
 		return this.makeRequest("getLatestState", request)
 	}
-    static async updateTerminalConnectionTimeout(request: proto.cline.Int64Request): Promise<proto.cline.Int64> {
+    static async updateTerminalConnectionTimeout(request: proto.cline.UpdateTerminalConnectionTimeoutRequest): Promise<proto.cline.UpdateTerminalConnectionTimeoutResponse> {
 		return this.makeRequest("updateTerminalConnectionTimeout", request)
 	}
     static async updateTerminalReuseEnabled(request: proto.cline.BooleanRequest): Promise<proto.cline.Empty> {
